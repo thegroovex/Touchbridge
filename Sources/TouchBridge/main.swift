@@ -12,6 +12,7 @@ var displayIndex: Int? = nil
 var ddcGet: [String] = []
 var ddcSet: [(String, Int)] = []
 var diagnoseSeconds: Double? = nil
+var checkUpdate = false
 
 func parseInt(_ s: String) -> Int? {
     s.lowercased().hasPrefix("0x") ? Int(s.dropFirst(2), radix: 16) : Int(s)
@@ -24,6 +25,7 @@ func printUsage() {
       --list-displays        Bildschirme auflisten
       --display N            Touch auf Bildschirm N abbilden (Standard: erster externer)
       --dump                 Descriptor + Kontakte ausgeben, keine Events senden
+      --check-update         auf GitHub nach einer neueren Version suchen (inkl. Vorabversionen), dann Ende
       --diagnose [SEK]       alle HID-Interfaces des Touch-Monitors nicht exklusiv öffnen, Input Mode setzen,
                              Rohreports protokollieren (Standard 10 s), dann Ende
       --no-seize             Gerät nicht exklusiv öffnen
@@ -52,6 +54,7 @@ while !args.isEmpty {
     case "--list-displays": listDisplays = true
     case "--display": displayIndex = Int(next())
     case "--dump": dump = true
+    case "--check-update": checkUpdate = true
     case "--diagnose":
         diagnoseSeconds = 10
         if let n = args.first.flatMap(Double.init) { diagnoseSeconds = n; args.removeFirst() }
@@ -93,6 +96,24 @@ if listDisplays {
               + (d.isBuiltin ? " intern" : " extern") + (d.isMain ? " (Hauptbildschirm)" : ""))
     }
     exit(0)
+}
+
+if checkUpdate {
+    let cur = Updater.currentVersion
+    print("Installiert: \(cur)")
+    Updater().check(includePrereleases: true, skipped: nil, current: cur) { r in
+        switch r {
+        case .success(let rel?):
+            print("Update verfügbar: \(rel.versionString)" + (rel.prerelease ? " (Vorabversion)" : ""))
+            if let a = UpdateLogic.dmgAsset(rel) { print("DMG: \(a.browserDownloadURL)") }
+            if let h = rel.htmlURL { print("Release: \(h)") }
+            print("Installieren: Menüleiste › Updates › Nach Updates suchen …")
+            exit(0)
+        case .success(nil): print("Kein Update – aktuell."); exit(0)
+        case .failure(let e): print("❌ \(e.localizedDescription)"); exit(1)
+        }
+    }
+    RunLoop.main.run()
 }
 
 if let secs = diagnoseSeconds {

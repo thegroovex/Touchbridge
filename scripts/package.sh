@@ -20,6 +20,8 @@ cp "$bindir/TouchBridge" "$app/Contents/MacOS/touchbridge"
 build="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 num="$(echo "$ver" | grep -Eo '^[0-9]+(\.[0-9]+)*' || echo 0.0.0)"
 sed -e "s/__VERSION__/${num:-0.0.0}/" -e "s/__BUILD__/$build/" Resources/Info.plist > "$app/Contents/Info.plist"
+# vollständige Version (inkl. -preview…) für den In-App-Updater
+plutil -insert TouchBridgeVersion -string "$ver" "$app/Contents/Info.plist"
 plutil -lint "$app/Contents/Info.plist"
 if [ -f Resources/AppIcon.icns ]; then cp Resources/AppIcon.icns "$app/Contents/Resources/"; fi
 printf 'APPL????' > "$app/Contents/PkgInfo"

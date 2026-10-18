@@ -20,9 +20,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var signalSources: [DispatchSourceSignal] = []
     private var permissionTimer: Timer?
     private var hadInputMonitoring = Permissions.inputMonitoring
+    private lazy var updater = Updater { [weak self] in self?.appendLog($0) }
+    private var availableUpdate: ReleaseInfo?
+    private var updateBusy = false
+    private var updateTimer: Timer?
 
     static var version: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+        Updater.currentVersion
     }
 
     // MARK: - Start
@@ -69,6 +73,120 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         RunLoop.main.add(t, forMode: .common)
         permissionTimer = t
+
+        // Updates: kurz nach dem Start und dann stündlich prüfen, ob die 24 h um sind
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in self?.autoCheckForUpdates() }
+        let u = Timer(timeInterval: 3600, repeats: true) { [weak self] _ in self?.autoCheckForUpdates() }
+        RunLoop.main.add(u, forMode: .common)
+        updateTimer = u
+    }
+
+    // MARK: - Updates
+
+    private func autoCheckForUpdates() {
+        guard SettingsStore.autoUpdateCheck, !updateBusy,
+              UpdateLogic.isCheckDue(lastCheck: SettingsStore.lastUpdateCheck, now: Date()) else { return }
+        checkForUpdates(interactive: false)
+    }
+
+    @objc private func checkForUpdatesAction() { checkForUpdates(interactive: true) }
+
+    private func checkForUpdates(interactive: Bool) {
+        guard !updateBusy else { return }
+        updateBusy = true
+        updater.check(includePrereleases: SettingsStore.includePrereleases,
+                      skipped: interactive ? nil : SettingsStore.skippedVersion) { [weak self] result in
+            guard let self = self else { return }
+            self.updateBusy = false
+            switch result {
+            case .success(let r):
+                SettingsStore.lastUpdateCheck = Date()
+                self.availableUpdate = r
+                self.updateIcon()
+                if let r = r {
+                    if interactive || SettingsStore.skippedVersion != r.versionString { self.offerUpdate(r) }
+                } else if interactive {
+                    self.alert("Kein Update", "TouchBridge \(Updater.currentVersion) ist aktuell.")
+                }
+            case .failure(let e):
+                self.appendLog("⚠️  Update-Prüfung: \(e.localizedDescription)")
+                if interactive { self.alert("Update-Prüfung fehlgeschlagen", e.localizedDescription) }
+            }
+        }
+    }
+
+    @objc private func showAvailableUpdate() { if let r = availableUpdate { offerUpdate(r) } }
+
+    private func offerUpdate(_ r: ReleaseInfo) {
+        NSApp.activate(ignoringOtherApps: true)
+        let a = NSAlert()
+        a.messageText = "TouchBridge \(r.versionString) ist verfügbar" + (r.prerelease ? " (Vorabversion)" : "")
+        var notes = (r.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if notes.count > 1500 { notes = String(notes.prefix(1500)) + " …" }
+        a.informativeText = "Installiert: \(Updater.currentVersion)\n\n" + (notes.isEmpty ? "Keine Release-Notes." : notes)
+        a.addButton(withTitle: "Jetzt installieren")
+        a.addButton(withTitle: "Später")
+        a.addButton(withTitle: "Diese Version überspringen")
+        switch a.runModal() {
+        case .alertFirstButtonReturn: install(r)
+        case .alertThirdButtonReturn:
+            SettingsStore.skippedVersion = r.versionString
+            availableUpdate = nil
+            updateIcon()
+        default: break
+        }
+    }
+
+    private func install(_ r: ReleaseInfo) {
+        updateBusy = true
+        statusItem.button?.title = " ⬇︎"
+        let target = Bundle.main.bundleURL
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let newApp = try self.updater.prepare(r)
+                DispatchQueue.main.async {
+                    do {
+                        // HID-Gerät (Seize) und Gamma sauber freigeben, bevor die App ersetzt und neu gestartet wird
+                        self.shutdown()
+                        try self.updater.install(newApp: newApp, over: target)
+                        Updater.relaunch(target)
+                        NSApp.terminate(nil)
+                    } catch {
+                        self.updateBusy = false
+                        self.statusItem.button?.title = ""
+                        self.service.start()
+                        self.alert("Update fehlgeschlagen", error.localizedDescription)
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.updateBusy = false
+                    self.statusItem.button?.title = ""
+                    self.updateIcon()
+                    self.alert("Update fehlgeschlagen", error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    @objc private func toggleAutoUpdate() { SettingsStore.autoUpdateCheck.toggle() }
+    @objc private func togglePrereleases() { SettingsStore.includePrereleases.toggle() }
+
+    private func updatesMenu() -> NSMenu {
+        let m = NSMenu()
+        m.addItem(action(updateBusy ? "Suche läuft …" : "Nach Updates suchen …", #selector(checkForUpdatesAction), enabled: !updateBusy))
+        m.addItem(toggle("Automatisch prüfen (beim Start und täglich)", SettingsStore.autoUpdateCheck, #selector(toggleAutoUpdate)))
+        m.addItem(toggle("Vorabversionen einbeziehen", SettingsStore.includePrereleases, #selector(togglePrereleases)))
+        if let d = SettingsStore.lastUpdateCheck {
+            let f = DateFormatter(); f.dateStyle = .short; f.timeStyle = .short
+            let i = NSMenuItem(title: "Zuletzt geprüft: " + f.string(from: d), action: nil, keyEquivalent: "")
+            i.isEnabled = false
+            m.addItem(i)
+        }
+        let v = NSMenuItem(title: "Installiert: \(Updater.currentVersion)", action: nil, keyEquivalent: "")
+        v.isEnabled = false
+        m.addItem(v)
+        return m
     }
 
     func applicationWillTerminate(_ notification: Notification) { shutdown() }
@@ -144,7 +262,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             button.title = "TB"
         }
-        button.toolTip = "TouchBridge – " + statusText
+        // Punkt in der Menüleiste, wenn ein Update bereitsteht
+        if !updateBusy && !diagnosing { button.title = availableUpdate != nil ? "•" : "" }
+        button.toolTip = "TouchBridge – " + statusText + (availableUpdate.map { " – Update \($0.versionString) verfügbar" } ?? "")
     }
 
     private var statusText: String {
@@ -205,6 +325,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let st = NSMenuItem(title: statusText, action: nil, keyEquivalent: "")
         st.isEnabled = false
         menu.addItem(st)
+        if let u = availableUpdate {
+            let i = action("● Update auf \(u.versionString) verfügbar …", #selector(showAvailableUpdate))
+            i.attributedTitle = NSAttributedString(string: i.title, attributes: [.foregroundColor: NSColor.systemBlue,
+                                                                                 .font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)])
+            menu.addItem(i)
+        }
         if !Permissions.inputMonitoring {
             let w = NSMenuItem(title: "⚠️ Eingabeüberwachung fehlt – es kommen keine Touch-Daten an", action: nil, keyEquivalent: "")
             w.attributedTitle = NSAttributedString(string: w.title, attributes: [
@@ -281,7 +407,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         menu.addItem(action(diagnosing ? "Diagnose läuft – Bildschirm berühren …" : "Diagnose aufzeichnen (10 s Touch)", #selector(runDiagnosis), enabled: !diagnosing))
         menu.addItem(action("Kommandozeilen-Tool installieren …", #selector(installCLI)))
-        menu.addItem(action("Hilfe & Updates", #selector(openHelp)))
+        menu.addItem(submenu("Updates", updatesMenu()))
+        menu.addItem(action("Hilfe", #selector(openHelp)))
         menu.addItem(.separator())
         menu.addItem(action("TouchBridge beenden", #selector(quit), key: "q"))
     }

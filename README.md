@@ -76,6 +76,27 @@ weitere Optionen `--base-note 36`, `--scale minor`, `--bend-range 24`.
 - Passende Layouts: `mixer` (8 Fader = Spurlautstärken, 8 Pads = Loop-Tasten) oder `performance` (XY-Feld für Effekte),
   jeweils mit `--no-mpe`.
 
+## Updates
+TouchBridge sucht beim Start und danach alle 24 Stunden auf GitHub nach einer neueren Version
+(Menü › **Updates**: „Nach Updates suchen …“, „Automatisch prüfen“, „Vorabversionen einbeziehen“ –
+Letzteres ist an, solange alle Versionen Previews sind). Gibt es ein Update, erscheint ein Punkt (•)
+neben dem Symbol in der Menüleiste und oben im Menü „Update auf … verfügbar“.
+
+„Jetzt installieren“ lädt `TouchBridge-<version>.dmg` und `SHA256SUMS.txt` aus dem Release, prüft die
+SHA-256-Prüfsumme, öffnet das DMG schreibgeschützt, prüft Bundle-ID, Version und Code-Signatur,
+entfernt das Quarantäne-Attribut (die App ist nicht notarisiert), gibt den Touch-Monitor frei, ersetzt
+die App (bei fehlenden Schreibrechten nach Rückfrage mit Administrator-Passwort) und startet sie neu.
+„Diese Version überspringen“ blendet genau diese Version aus.
+
+Im Terminal: `touchbridge --check-update`.
+
+## Diagnose
+Menü › **Diagnose aufzeichnen** (oder `touchbridge --diagnose`): Der Touch-Dienst gibt das Gerät frei, dann werden
+alle HID-Interfaces des Monitors **nicht exklusiv** geöffnet und aufgelistet (Usage-Paare, Report-Größen,
+Transport, Location-ID), der Input Mode auf Multi-Touch gesetzt (Feature-Report vorher/nachher) und 10 s lang
+Rohreports und HID-Werte protokolliert – mit allen Return-Codes und den Details der DDC-Probe. Kommen keine
+Reports an, steht das ausdrücklich im Ergebnis.
+
 ## Installieren
 1. Unter **Releases** `TouchBridge-<version>.dmg` laden (Apple Silicon und Intel, ab macOS 12).
 2. DMG öffnen, **TouchBridge** auf „Programme“ ziehen.

@@ -19,10 +19,28 @@ TouchBridge liest diese Touch-Daten direkt, übernimmt das Gerät exklusiv und
 | 3 Finger links/rechts | Space wechseln (Ctrl ←/→) |
 | 3 Finger hoch / runter | Mission Control / App-Exposé |
 
-## Installieren (fertige Version)
-1. Unter **Releases** `TouchBridge-<version>-macOS-universal.zip` laden (läuft auf Apple Silicon und Intel, ab macOS 12).
-2. Entpacken, im Terminal in den Ordner wechseln und `./install.sh` ausführen
-   (kopiert nach `/usr/local/bin/touchbridge` und entfernt die Download-Quarantäne).
+## Installieren
+1. Unter **Releases** `TouchBridge-<version>.dmg` laden (Apple Silicon und Intel, ab macOS 12).
+2. DMG öffnen, **TouchBridge** auf „Programme“ ziehen.
+3. Erster Start: Rechtsklick auf TouchBridge › **Öffnen** (die App ist nicht von Apple notarisiert),
+   alternativ Systemeinstellungen › Datenschutz & Sicherheit › „Trotzdem öffnen“.
+4. **Bedienungshilfen** und **Eingabeüberwachung** für TouchBridge erlauben.
+
+Danach sitzt ein Hand-Symbol in der Menüleiste.
+
+## Menüleiste
+- **Touch aktiv** an/aus, Status des erkannten Touch-Monitors
+- **Bild**: Helligkeit, Kontrast, Lautstärke per DDC/CI (Apple-Silicon-Macs, wenn der Monitor DDC kann),
+  dazu Software-Abdunkeln für jeden Bildschirm
+- **Touch**: Ziel-Bildschirm, Ausrichtung (0/90/180/270°, spiegeln), Scrollrichtung und -tempo, exklusiver Modus
+- **Beim Anmelden starten** (ab macOS 13), Berechtigungen prüfen
+- **Diagnose aufzeichnen**: 10 s Touch-Rohdaten, landen in der Zwischenablage und als
+  `TouchBridge-Diagnose.txt` auf dem Schreibtisch
+- **Kommandozeilen-Tool installieren**: verlinkt `touchbridge` nach `/usr/local/bin`
+
+## Kommandozeile
+`touchbridge --list-displays`, `touchbridge --dump`, `touchbridge --rotate 90`,
+`touchbridge --brightness 60`, `touchbridge --get volume` – alle Optionen: `touchbridge --help`.
 
 ## Selbst bauen
 Voraussetzung: Xcode Command Line Tools (`xcode-select --install`).
@@ -30,36 +48,21 @@ Voraussetzung: Xcode Command Line Tools (`xcode-select --install`).
 ```bash
 swift build -c release
 swift test                       # Unit-Tests (Descriptor-Parser, Frames, Gesten)
-scripts/package.sh dev           # universelles Paket nach dist/
+scripts/package.sh dev           # TouchBridge.app als DMG nach dist/
 ```
 
 ## Aufbau
-- `Sources/TouchBridgeCore` – HID-Descriptor-Parser, Frame-Zusammenbau (inkl. Hybrid-Modus), Gesten-Engine
-- `Sources/TouchBridge` – CLI: IOKit-HID, Bildschirm-Mapping, Rechte
+- `Sources/TouchBridgeCore` – HID-Descriptor-Parser, Frame-Zusammenbau (inkl. Hybrid-Modus), Gesten-Engine, Mapping, DDC-Pakete
+- `Sources/TouchBridgeKit` – IOKit-HID-Dienst, Bildschirme, Bildsteuerung (DDC über IOAVService / Gamma), Rechte
+- `Sources/TouchBridgeApp` – Menüleisten-App
+- `Sources/TouchBridge` – Kommandozeilen-Tool
 - `Tests/TouchBridgeCoreTests` – XCTest mit typischen Touchscreen-Descriptoren und Gesten-Szenarien
 - `.github/workflows/ci.yml` – CI: universal Build + Tests (Apple Silicon + Intel), Paket als Artefakt, Release-Upload
 
 ## Erster Test
-1. Monitor per USB-C anschließen (Bild + Touch über dasselbe Kabel).
-2. `touchbridge --list-displays` → Nummer des Anmite merken.
-3. `touchbridge --dump --display N` → Bildschirm berühren. Es sollten Zeilen wie
-   `2 Finger: #0 raw(…) -> (x,y)` erscheinen.
-4. Läuft das: `sudo touchbridge --display N`
+1. Monitor per USB-C anschließen (Bild + Touch über dasselbe Kabel), TouchBridge starten.
+2. Menü › **Diagnose aufzeichnen** und 10 s den Bildschirm berühren – die Datei hilft beim Anpassen.
+3. Landet der Touch gedreht oder gespiegelt: Menü › Touch › Ausrichtung.
 
-Beim ersten Start fragt macOS nach **Bedienungshilfen** und **Eingabeüberwachung**
-(für das Terminal). Beides erlauben und neu starten.
-`sudo` wird gebraucht, damit TouchBridge das Gerät exklusiv bekommt – sonst bewegt
-macOS den Cursor zusätzlich selbst.
-
-## Anpassen
-- Touch landet gespiegelt/gedreht: `--flip-x`, `--flip-y`, `--swap-xy` kombinieren.
-- Scrollrichtung falsch: `--invert-scroll`; zu langsam/schnell: `--scroll-gain 1.5`.
-- Bestimmtes Gerät: `--vid 0x222A --pid 0x0001` (Werte zeigt `--dump`).
-
-## Wenn nichts erkannt wird
-`--dump` gibt dann den HID-Descriptor als Hex aus – einfach mir schicken, dann passe ich den Parser an.
-
-## Autostart (optional, experimentell)
-Erst wenn der manuelle Start sauber läuft: `com.groovex.touchbridge.plist` nach `~/Library/LaunchAgents/`
-kopieren (Display-Nummer anpassen) und `launchctl load ~/Library/LaunchAgents/com.groovex.touchbridge.plist`.
-Als LaunchAgent läuft es ohne root – klappt der exklusive Zugriff dann nicht, siehe `/tmp/touchbridge.log`.
+Klappt der exklusive Zugriff nicht, bewegt macOS den Cursor zusätzlich selbst; dann im Terminal
+`sudo touchbridge` als Gegenprobe starten und mir die Diagnose schicken.

@@ -86,7 +86,9 @@ public final class GestureEngine {
     private let poster: EventSink
     /// Zeitquelle (in Tests ersetzbar)
     public var clock: () -> Double = { CFAbsoluteTimeGetCurrent() }
-    private let cfg: GestureConfig
+    private var cfg: GestureConfig
+    /// Aktuelle Einstellungen; Änderungen wirken ab dem nächsten Frame.
+    public var config: GestureConfig { get { cfg } set { cfg = newValue } }
 
     private var startTime = 0.0
     private var startPoint = CGPoint.zero

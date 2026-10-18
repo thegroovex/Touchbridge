@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>com.groovex.touchbridge</string>
+  <key>CFBundleName</key><string>TouchBridge</string>
+  <key>CFBundleDisplayName</key><string>TouchBridge</string>
+  <key>CFBundleExecutable</key><string>TouchBridgeApp</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>__VERSION__</string>
+  <key>CFBundleVersion</key><string>__BUILD__</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>LSMinimumSystemVersion</key><string>12.0</string>
+  <key>LSUIElement</key><true/>
+  <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
+  <key>NSHumanReadableCopyright</key><string>designed by groovex</string>
+  <key>NSAppleEventsUsageDescription</key><string>Zum Installieren des Kommandozeilen-Tools nach /usr/local/bin.</string>
+</dict>
+</plist>

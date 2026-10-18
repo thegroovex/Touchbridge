@@ -3,9 +3,10 @@ name: CI
 # Every push to main, every pull request and every manual run (Actions -> CI -> Run workflow):
 # macOS universal build (arm64 + x86_64), unit tests (XCTest, parallel) and the release package.
 #   build-test   swift build (universal, release) + swift test --parallel on Apple silicon; SwiftPM build
-#                cache via actions/cache; the package zip is uploaded as artefact "TouchBridge-macOS-universal".
+#                cache via actions/cache; TouchBridge.app is packed into a DMG, mounted and verified
+#                (bundle layout, Info.plist, code signature, CLI inside the bundle); uploaded as artefact.
 #   test-intel   swift test on an Intel runner (x86_64 behaviour of the parser / gestures).
-#   release      on a published GitHub release: the package is built with the release tag as version
+#   release      on a published GitHub release: the DMG is built with the release tag as version
 #                and attached together with SHA256SUMS.txt.
 # Pull requests that only change docs/** or *.md skip the builds; the "CI result" job reports for every run.
 # On a failure the build/test log tail is written to the job summary and uploaded as artefact "ci-logs".
@@ -110,17 +111,39 @@ jobs:
           "$bin" --help | tee ci-logs/smoke.log
           "$bin" --list-displays | tee -a ci-logs/smoke.log
 
-      - name: Package
+      - name: Package (TouchBridge.app in DMG)
         run: |
           set -o pipefail
-          ver="${GITHUB_SHA::7}"
-          scripts/package.sh "$ver" 2>&1 | tee ci-logs/package.log
+          scripts/package.sh "0.0.0-${GITHUB_SHA::7}" 2>&1 | tee ci-logs/package.log
+
+      - name: Verify DMG
+        run: |
+          set -o pipefail
+          dmg="$(ls dist/*.dmg)"
+          mnt="$(mktemp -d)"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "$dmg"
+          app="$mnt/TouchBridge.app"
+          {
+            test -L "$mnt/Programme"
+            test -f "$mnt/Zuerst lesen.txt"
+            plutil -p "$app/Contents/Info.plist" | grep -E 'CFBundleIdentifier|LSUIElement|CFBundleExecutable'
+            lipo -info "$app/Contents/MacOS/TouchBridgeApp"
+            lipo "$app/Contents/MacOS/TouchBridgeApp" -verify_arch arm64 x86_64
+            codesign --verify --deep --strict --verbose=2 "$app"
+            help="$("$app/Contents/MacOS/touchbridge" --help)"; echo "${help%%$'\n'*}"
+            # Menüleisten-App startet und läuft stabil (4 s), dann beenden
+            "$app/Contents/MacOS/TouchBridgeApp" & pid=$!
+            sleep 4
+            kill -0 "$pid" && echo "TouchBridgeApp läuft (pid $pid)"
+            kill "$pid"; wait "$pid" 2>/dev/null || true
+          } 2>&1 | tee ci-logs/verify.log
+          hdiutil detach "$mnt" || hdiutil detach -force "$mnt"
 
       - uses: actions/upload-artifact@v4
         with:
           name: TouchBridge-macOS-universal
           path: |
-            dist/*.zip
+            dist/*.dmg
             dist/SHA256SUMS.txt
 
       - name: Failure report
@@ -173,7 +196,7 @@ jobs:
       - name: Upload to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$GITHUB_REF_NAME" dist/*.zip dist/SHA256SUMS.txt --clobber --repo "$GITHUB_REPOSITORY"
+        run: gh release upload "$GITHUB_REF_NAME" dist/*.dmg dist/SHA256SUMS.txt --clobber --repo "$GITHUB_REPOSITORY"
 
   # ---------------------------------------------------------------------------------- gate
   result:

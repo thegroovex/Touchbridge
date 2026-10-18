@@ -114,3 +114,42 @@ final class PressureDescriptorTests: XCTestCase {
         XCTAssertEqual(c?.size ?? -1, 0.5, accuracy: 1e-9)
     }
 }
+
+final class AnmiteDescriptorTests: XCTestCase {
+    let d = HIDDescriptor(bytes: Fixtures.anmite)
+
+    func testTouchLayout() {
+        let layouts = TouchLayout.build(from: d)
+        XCTAssertEqual(Array(layouts.keys), [13])
+        let l = layouts[13]!
+        XCTAssertEqual(l.fingers.count, 10)
+        XCTAssertNotNil(l.contactCount)
+        XCTAssertEqual(l.fingers[0].x?.logicalMax, 16383)
+        XCTAssertEqual(l.fingers[0].y?.logicalMax, 9599)
+        XCTAssertEqual(l.fingers[0].contactID?.bitSize, 4)
+        XCTAssertEqual(l.fingers[1].x?.bitOffset, 5 * 8 + 8)
+        XCTAssertEqual(l.contactCount?.bitOffset, 10 * 40 + 16)
+    }
+
+    func testFeatureFieldsAndInputModeReport() {
+        XCTAssertEqual(d.contactCountMaximumField?.reportID, 0x0A)
+        let im = d.featureFields.first { $0.usage == Usage.inputMode }
+        XCTAssertEqual(im?.reportID, 0x21)
+        XCTAssertEqual(im?.bitOffset, 0)
+        XCTAssertEqual(d.featureFields.first { $0.usage == Usage.deviceIndex }?.bitOffset, 8)
+        XCTAssertEqual(d.featureReportBits[0x21], 16)
+        let r = d.inputModeReport()
+        XCTAssertEqual(r?.reportID, 0x21)
+        XCTAssertEqual(r?.bytes, [0x21, 0x02, 0x00])
+        XCTAssertNil(HIDDescriptor(bytes: Fixtures.touchScreen(fingers: 2)).inputModeReport())
+    }
+
+    func testFrame() {
+        var a = TouchFrameAssembler(descriptor: d)
+        var r: [UInt8] = [13] + Fixtures.anmiteSlot(tip: true, id: 3, x: 8000, y: 4000)
+            + Fixtures.anmiteSlot(tip: true, id: 12, x: 16383, y: 9599)
+        for _ in 2..<10 { r += Fixtures.anmiteSlot(tip: false, id: 0, x: 0, y: 0) }
+        r += [0x34, 0x12, 2]   // Scan Time, Contact Count
+        XCTAssertEqual(a.feed(r)?.contacts, [RawContact(id: 3, x: 8000, y: 4000), RawContact(id: 12, x: 16383, y: 9599)])
+    }
+}

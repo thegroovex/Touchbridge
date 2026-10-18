@@ -25,7 +25,15 @@ public final class DisplayControl {
     }
 
     public let display: CGDirectDisplayID
-    public private(set) var hasDDC = false
+    /// DDC nutzbar: aktuelle Probe erfolgreich ODER für diesen Monitor schon einmal erfolgreich gewesen.
+    public var hasDDC: Bool { av != nil && (probeOK || DisplayControl.rememberedDDC(display)) }
+    /// Letzte Probe hat geantwortet
+    public private(set) var probeOK = false
+    public private(set) var probing = false
+    /// Anzahl gefundener DCPAVServiceProxy-Dienste mit Location = External
+    public private(set) var serviceCount = 0
+    /// Details der letzten Probe (Return-Codes, Rohantwort) für die Diagnose
+    public private(set) var probeDetails: [String] = []
     /// Software-Helligkeit 0.2…1.0 (Gamma), wirkt zusätzlich zur Hardware-Helligkeit.
     public private(set) var softwareBrightness: Double = 1.0
     private var maxValues: [Feature: UInt16] = [:]
@@ -33,10 +41,51 @@ public final class DisplayControl {
     private let queue = DispatchQueue(label: "touchbridge.ddc")
     private var pending: [Feature: Int] = [:]
 
-    public init(display: CGDirectDisplayID) {
+    /// Sucht den DDC-Dienst und probt sofort (blockierend, bis ~5 Versuche – nicht auf dem Main-Thread aufrufen).
+    /// Der Dienst wird auch bei fehlgeschlagener Probe behalten, damit später erneut geprobt werden kann.
+    public init(display: CGDirectDisplayID, probeNow: Bool = true) {
         self.display = display
-        av = AVService.forDisplay(display)
-        hasDDC = av != nil
+        let found = AVService.forDisplay(display)
+        av = found.service
+        serviceCount = found.count
+        if probeNow { runProbe() }
+    }
+
+    private static func memoryKey(_ id: CGDirectDisplayID) -> String {
+        "ddcOK-\(CGDisplayVendorNumber(id))-\(CGDisplayModelNumber(id))-\(CGDisplaySerialNumber(id))"
+    }
+    public static func rememberedDDC(_ id: CGDirectDisplayID) -> Bool { UserDefaults.standard.bool(forKey: memoryKey(id)) }
+    public static func forgetDDC(_ id: CGDirectDisplayID) { UserDefaults.standard.removeObject(forKey: memoryKey(id)) }
+
+    private func runProbe() {
+        var lines = [String(format: "DDC: Bildschirm %u (Vendor 0x%04X, Modell 0x%04X), DCPAVServiceProxy External: %d, Dienst zugeordnet: %@",
+                            display, CGDisplayVendorNumber(display), CGDisplayModelNumber(display), serviceCount,
+                            av == nil ? "nein" : "ja")]
+        if CGDisplayIsBuiltin(display) != 0 { lines.append("DDC: interner Bildschirm – kein DDC") }
+        var ok = false
+        if let av = av {
+            let r = av.readVCPTraced(DDC.VCP.brightness.rawValue, attempts: 5)
+            lines += r.trace
+            if let v = r.value {
+                ok = true
+                maxValues[.brightness] = v.max
+                UserDefaults.standard.set(true, forKey: DisplayControl.memoryKey(display))
+            }
+        }
+        lines.append("DDC-Probe: " + (ok ? "OK" : "keine Antwort") + (DisplayControl.rememberedDDC(display) ? " (früher schon erfolgreich – Regler bleiben)" : ""))
+        probeOK = ok
+        probeDetails = lines
+    }
+
+    /// Erneut asynchron proben (z. B. beim Öffnen des Menüs oder nach Bildschirmwechsel). completion auf dem Main-Thread.
+    public func probe(completion: @escaping (Bool) -> Void) {
+        guard !probing else { return }
+        probing = true
+        queue.async {
+            self.runProbe()
+            let ok = self.probeOK
+            DispatchQueue.main.async { self.probing = false; completion(ok) }
+        }
     }
 
     /// Liest den aktuellen Wert (0…100) asynchron; Ergebnis auf dem Main-Thread. nil = nicht unterstützt.
@@ -125,15 +174,38 @@ final class AVService {
     }
 
     /// Ordnet externe Bildschirme den Diensten der Reihe nach zu (bei einem externen Monitor eindeutig).
-    static func forDisplay(_ id: CGDirectDisplayID) -> AVService? {
-        guard CGDisplayIsBuiltin(id) == 0 else { return nil }
+    /// Ohne Probe – ob der Monitor antwortet, entscheidet DisplayControl (mit Wiederholungen).
+    static func forDisplay(_ id: CGDirectDisplayID) -> (service: AVService?, count: Int) {
         let services = externalServices()
-        guard !services.isEmpty else { return nil }
+        guard CGDisplayIsBuiltin(id) == 0, !services.isEmpty else { return (nil, services.count) }
         let ext = Displays.externalIDs()
         let idx = ext.firstIndex(of: id) ?? 0
-        let candidate = services[min(idx, services.count - 1)]
-        // Nur behalten, wenn der Monitor tatsächlich auf DDC antwortet.
-        return candidate.readVCP(DDC.VCP.brightness.rawValue) != nil ? candidate : nil
+        return (services[min(idx, services.count - 1)], services.count)
+    }
+
+    /// Wie readVCP, mit Protokoll (Write-/Read-Return-Codes, Rohantwort) und längeren Pausen.
+    func readVCPTraced(_ vcp: UInt8, attempts: Int) -> (value: (current: UInt16, max: UInt16)?, trace: [String]) {
+        guard let w = AVService.writeI2C, let r = AVService.readI2C else {
+            return (nil, ["DDC: IOAVServiceWriteI2C/ReadI2C nicht verfügbar (Intel-Mac?)"])
+        }
+        var trace: [String] = []
+        var req = DDC.getPacket(vcp: vcp)
+        for i in 1...max(1, attempts) {
+            let wr = req.withUnsafeMutableBytes { w(ref, DDC.chipAddress, DDC.dataAddress, $0.baseAddress!, UInt32($0.count)) }
+            guard wr == kIOReturnSuccess else {
+                trace.append("DDC Versuch \(i): Write " + HIDReturn.describe(wr))
+                usleep(100_000); continue
+            }
+            usleep(80_000)
+            var buf = [UInt8](repeating: 0, count: 12)
+            let rr = buf.withUnsafeMutableBytes { r(ref, DDC.chipAddress, DDC.dataAddress, $0.baseAddress!, UInt32($0.count)) }
+            let v = rr == kIOReturnSuccess ? DDC.parseReply(buf, vcp: vcp) : nil
+            trace.append("DDC Versuch \(i): Write OK, Read " + HIDReturn.describe(rr) + " Antwort [" + HIDFeature.hex(buf) + "]"
+                         + (v.map { " -> \($0.current)/\($0.max)" } ?? " (ungültig)"))
+            if let v = v { return (v, trace) }
+            usleep(100_000)
+        }
+        return (nil, trace)
     }
 
     func writeVCP(_ vcp: UInt8, value: UInt16) -> Bool {

@@ -74,3 +74,52 @@ final class DDCTests: XCTestCase {
         XCTAssertNil(DDC.parseReply(unsupported, vcp: 0x10))  // "nicht unterstützt"
     }
 }
+
+final class DisplayTargetTests: XCTestCase {
+    let mac = DisplayCandidate(id: 1, name: "Integrierter Retina-Bildschirm", isBuiltin: true, isMain: true)
+    let anmite = DisplayCandidate(id: 5, name: "ANMITE", isBuiltin: false, isMain: false)
+    let other = DisplayCandidate(id: 7, name: "DELL U2720Q", isBuiltin: false, isMain: false)
+
+    func testChoosesMatchingExternalDisplay() {
+        XCTAssertEqual(DisplayChoice.choose([mac, other, anmite], preferred: nil, deviceHints: ["TouchScreen", "ANMITE"]), 5)
+        XCTAssertEqual(DisplayChoice.choose([mac, anmite], preferred: nil, deviceHints: []), 5)      // einziger externer
+        XCTAssertEqual(DisplayChoice.choose([mac, anmite, other], preferred: 7, deviceHints: ["ANMITE"]), 7)
+        XCTAssertEqual(DisplayChoice.choose([mac, anmite], preferred: 99, deviceHints: []), 5)      // gewählter weg
+        XCTAssertEqual(DisplayChoice.choose([mac], preferred: nil, deviceHints: ["ANMITE"]), 1)
+        // generische Wörter („Touch“, „Screen“) dürfen nicht auf irgendeinen Bildschirm passen
+        XCTAssertEqual(DisplayChoice.choose([mac, other, anmite], preferred: nil, deviceHints: ["Touch Screen"]), 7)
+    }
+
+    func testAbsoluteMappingOnNegativeOrigin() {
+        // Anmite links vom MacBook: CGDisplayBounds (-1920, -218) 1920×1200
+        let r = CGRect(x: -1920, y: -218, width: 1920, height: 1200)
+        XCTAssertEqual(TouchMapping().screenPoint(0, 0, in: r), CGPoint(x: -1920, y: -218))
+        XCTAssertEqual(TouchMapping().screenPoint(1, 1, in: r), CGPoint(x: -1, y: 981))
+        let mid = TouchMapping().screenPoint(0.5, 0.5, in: r)
+        XCTAssertEqual(mid.x, -960.5, accuracy: 1e-9); XCTAssertEqual(mid.y, 381.5, accuracy: 1e-9)
+        XCTAssertTrue(r.contains(TouchMapping(rotation: 90).screenPoint(0.3, 0.9, in: r)))
+        // Anmite-Rohkoordinaten (X 0…16383, Y 0…9599) landen auf dem Anmite-Rect, nicht auf dem Hauptbildschirm
+        let p = TouchMapping().screenPoint(TouchMapping.normalize(16383, min: 0, max: 16383),
+                                           TouchMapping.normalize(0, min: 0, max: 9599), in: r)
+        XCTAssertEqual(p, CGPoint(x: -1, y: -218))
+    }
+
+    func testOneFingerUsesAbsolutePositions() {
+        // 1 Finger: Tap = Klick an der absoluten Position, Ziehen = Down/Dragged an absoluten Positionen (keine Deltas)
+        let sink = RecordingSink()
+        let e = GestureEngine(poster: sink, config: GestureConfig())
+        var now = 0.0
+        e.clock = { now }
+        e.update([CGPoint(x: -1500, y: 100)])
+        now += 0.1
+        e.update([])
+        XCTAssertEqual(sink.events, ["move -1500,100", "click -1500,100"])
+        sink.events = []
+        now += 1
+        e.update([CGPoint(x: -1000, y: 500)])
+        e.update([CGPoint(x: -900, y: 520)])
+        e.update([CGPoint(x: -800, y: 540)])
+        e.update([])
+        XCTAssertEqual(sink.events, ["move -1000,500", "down -1000,500", "drag -900,520", "drag -800,540", "up -800,540"])
+    }
+}

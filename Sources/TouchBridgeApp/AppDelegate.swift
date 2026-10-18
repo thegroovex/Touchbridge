@@ -16,6 +16,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var ddcValues: [DisplayControl.Feature: Int] = [:]
     private var logLines: [String] = []
     private var diagnosing = false
+    private var probe: HIDProbe?
+    private var signalSources: [DispatchSourceSignal] = []
+    private var permissionTimer: Timer?
+    private var hadInputMonitoring = Permissions.inputMonitoring
 
     static var version: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
@@ -43,9 +47,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         NotificationCenter.default.addObserver(self, selector: #selector(screensChanged),
                                                name: NSApplication.didChangeScreenParametersNotification, object: nil)
+
+        // Beenden per kill/Abmelden: Gerät sauber schließen (Seize freigeben), sonst bleibt es bis zum Abstecken belegt
+        for sig in [SIGTERM, SIGINT, SIGHUP] {
+            signal(sig, SIG_IGN)
+            let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+            src.setEventHandler { [weak self] in self?.shutdown(); exit(0) }
+            src.resume()
+            signalSources.append(src)
+        }
+
+        // Eingabeüberwachung beobachten: sobald erteilt, Touch neu starten
+        let t = Timer(timeInterval: 3, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            let now = Permissions.inputMonitoring
+            if now != self.hadInputMonitoring {
+                self.hadInputMonitoring = now
+                self.appendLog("🔐 Eingabeüberwachung jetzt: \(Permissions.inputMonitoringState)")
+                if now { self.restartService() } else { self.updateIcon() }
+            }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        permissionTimer = t
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
+    func applicationWillTerminate(_ notification: Notification) { shutdown() }
+
+    private func shutdown() {
+        probe?.close(); probe = nil
         service.stop()
         DisplayControl.restoreAllGamma()
     }
@@ -54,6 +83,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshControl()
         updateIcon()
         updateOverlay()
+    }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        // DDC antwortet manchmal erst verzögert (Monitor/DCP noch nicht bereit): beim Öffnen erneut proben
+        if let ctl = control, !ctl.probeOK, !ctl.probing { reprobeDDC(ctl) }
+    }
+
+    private func reprobeDDC(_ ctl: DisplayControl) {
+        ctl.probe { [weak self] ok in
+            guard let self = self, self.control === ctl else { return }
+            if ok || ctl.hasDDC { self.readDDCValues(ctl) }
+        }
+    }
+
+    private func readDDCValues(_ ctl: DisplayControl) {
+        for f in DisplayControl.Feature.allCases {
+            ctl.read(f) { [weak self] v in
+                guard let self = self else { return }
+                // Wert behalten, wenn eine Leseprobe fehlschlägt, aber früher einer da war
+                if let v = v { self.ddcValues[f] = v } else if self.ddcValues[f] == nil { self.ddcValues[f] = -1 }
+                self.menuNeedsUpdate(self.menu)
+            }
+        }
     }
 
     // MARK: - MIDI-Overlay
@@ -83,6 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let st = service.status
         let symbol: String
         if !settings.enabled { symbol = "hand.raised.slash" }
+        else if !Permissions.inputMonitoring || st.lastError != nil { symbol = "exclamationmark.triangle" }
         else if settings.mode == .midi { symbol = "pianokeys" }
         else if st.running && !st.devices.isEmpty { symbol = "hand.point.up.left.fill" }
         else { symbol = "hand.point.up.left" }
@@ -97,17 +150,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusText: String {
         let st = service.status
         if !settings.enabled { return "Touch aus" }
+        if !Permissions.inputMonitoring { return "Keine Berechtigung (Eingabeüberwachung)" }
         if let e = st.lastError { return e }
-        if st.devices.isEmpty { return "Kein Touch-Monitor gefunden" }
-        return st.devices.joined(separator: ", ") + (st.exclusive ? "" : " (nicht exklusiv)")
+        if st.devices.isEmpty { return "Touch-Monitor nicht angeschlossen" }
+        return st.devices.joined(separator: ", ") + (st.exclusive ? " – exklusiv" : " – nicht exklusiv")
             + (settings.mode == .midi ? " – MIDI" : "")
     }
 
     // MARK: - Bildsteuerung
 
     private func refreshControl() {
-        let target = Displays.resolve(settings.displayID)
-        guard target != controlDisplay || control == nil else { return }
+        let target = service.targetDisplay
+        guard target != controlDisplay || control == nil else {
+            // gleicher Bildschirm, aber neu konfiguriert: DDC erneut proben, falls es zuletzt nicht antwortete
+            if let ctl = control, !ctl.probeOK, !ctl.probing { reprobeDDC(ctl) }
+            return
+        }
         controlDisplay = target
         control = nil
         ddcValues = [:]
@@ -118,13 +176,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.control = ctl
                 let sw = SettingsStore.softwareBrightness
                 if sw < 0.999 { ctl.setSoftwareBrightness(sw) }
-                if ctl.hasDDC {
-                    for f in DisplayControl.Feature.allCases {
-                        ctl.read(f) { v in self.ddcValues[f] = v ?? -1 }
+                if ctl.hasDDC { self.readDDCValues(ctl) }
+                if !ctl.probeOK {
+                    // verzögert erneut versuchen (Monitor nach Start/Anstecken noch nicht bereit)
+                    for delay in [3.0, 10.0] {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                            guard let self = self, self.control === ctl, !ctl.probeOK, !ctl.probing else { return }
+                            self.reprobeDDC(ctl)
+                        }
                     }
                 }
             }
         }
+    }
+
+    @objc private func reprobeDDCAction() {
+        if let ctl = control { reprobeDDC(ctl) } else { refreshControl() }
     }
 
     // MARK: - Menü
@@ -138,6 +205,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let st = NSMenuItem(title: statusText, action: nil, keyEquivalent: "")
         st.isEnabled = false
         menu.addItem(st)
+        if !Permissions.inputMonitoring {
+            let w = NSMenuItem(title: "⚠️ Eingabeüberwachung fehlt – es kommen keine Touch-Daten an", action: nil, keyEquivalent: "")
+            w.attributedTitle = NSAttributedString(string: w.title, attributes: [
+                .foregroundColor: NSColor.systemRed, .font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)])
+            w.isEnabled = false
+            menu.addItem(w)
+            menu.addItem(action("Systemeinstellungen › Eingabeüberwachung öffnen …", #selector(openInputMonitoring)))
+        }
+        if settings.enabled, let e = service.status.seizeError, !service.status.devices.isEmpty {
+            let w = NSMenuItem(title: "⚠️ Nicht exklusiv: \(e) – neuer Versuch alle 2 s", action: nil, keyEquivalent: "")
+            w.attributedTitle = NSAttributedString(string: w.title, attributes: [.foregroundColor: NSColor.systemOrange])
+            w.isEnabled = false
+            menu.addItem(w)
+        }
         menu.addItem(toggle("Touch aktiv", settings.enabled, #selector(toggleEnabled), key: "t"))
         menu.addItem(.separator())
 
@@ -163,7 +244,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     menu.addItem(item)
                 }
             } else {
-                let note = NSMenuItem(title: "Monitor antwortet nicht auf DDC – Software-Dimmen", action: nil, keyEquivalent: "")
+                let note = NSMenuItem(title: ctl.probing ? "DDC wird geprüft …" : "Monitor antwortet nicht auf DDC – Software-Dimmen",
+                                      action: nil, keyEquivalent: "")
                 note.isEnabled = false
                 menu.addItem(note)
             }
@@ -176,6 +258,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             let swItem = NSMenuItem(); swItem.view = swView
             menu.addItem(swItem)
+            menu.addItem(action(ctl.probing ? "DDC wird geprüft …" : "DDC erneut prüfen", #selector(reprobeDDCAction), enabled: !ctl.probing))
         } else {
             let wait = NSMenuItem(title: "Bildschirm wird abgefragt …", action: nil, keyEquivalent: "")
             wait.isEnabled = false
@@ -382,8 +465,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func quit() { NSApp.terminate(nil) }
 
-    /// 10 Sekunden Dump-Modus: Descriptor + Kontakte werden gesammelt, in die Zwischenablage
-    /// kopiert und als Textdatei auf dem Schreibtisch gespeichert.
+    /// 10-Sekunden-Diagnose: Touch-Dienst wird angehalten (Gerät freigegeben), dann werden ALLE HID-Interfaces des
+    /// Touch-Monitors nicht exklusiv geöffnet, Input Mode gesetzt und Rohreports protokolliert; dazu DDC-Probe.
+    /// Ergebnis in die Zwischenablage und als Textdatei auf den Schreibtisch.
     @objc private func runDiagnosis() {
         diagnosing = true
         logLines.removeAll()
@@ -392,25 +476,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for (i, d) in Displays.all().enumerated() {
             appendLog("[\(i)] \(d.summary) id=\(d.id) @ (\(Int(d.bounds.minX)),\(Int(d.bounds.minY)))" + (d.isBuiltin ? " intern" : " extern"))
         }
-        appendLog("DDC: " + ((control?.hasDDC ?? false) ? "ja" : "nein")
-                  + "  Bedienungshilfen: \(Permissions.accessibility)  Eingabeüberwachung: \(Permissions.inputMonitoring)")
+        let tb = CGDisplayBounds(service.targetDisplay)
+        appendLog("Touch-Ziel: id=\(service.targetDisplay) \(Int(tb.width))×\(Int(tb.height)) @ (\(Int(tb.minX)),\(Int(tb.minY)))  Modus: \(settings.mode.title)")
+        appendLog("Bedienungshilfen: \(Permissions.accessibility)  Eingabeüberwachung: \(Permissions.inputMonitoringState)")
+        appendLog("— Touch-Dienst vor der Diagnose —")
+        appendLog("Status: \(statusText)  Reports bisher: \(service.reportCount)")
+        for l in service.openLog { appendLog(l) }
         service.stop()
-        service.dumpMode = true
-        service.start()
         statusItem.button?.title = " REC"
-        DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
-            self.service.stop()
-            self.service.dumpMode = false
-            self.service.start()
-            self.diagnosing = false
-            self.statusItem.button?.title = ""
-            let text = self.logLines.joined(separator: "\n")
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
-            let url = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("TouchBridge-Diagnose.txt")
-            try? text.write(to: url, atomically: true, encoding: .utf8)
-            self.alert("Diagnose fertig", "In die Zwischenablage kopiert und als „TouchBridge-Diagnose.txt“ auf dem Schreibtisch gespeichert.")
+
+        let ctl = control
+        let p = HIDProbe(vid: settings.vid ?? HIDProbe.anmiteVID, pid: settings.pid ?? HIDProbe.anmitePID) { [weak self] in self?.appendLog($0) }
+        probe = p
+        p.run(seconds: 10) { [weak self] summary in
+            guard let self = self else { return }
+            self.probe = nil
+            let finish = {
+                if let c = ctl { for l in c.probeDetails { self.appendLog(l) } } else { self.appendLog("DDC: kein Bildschirm-Objekt") }
+                self.service.start()
+                self.diagnosing = false
+                self.statusItem.button?.title = ""
+                self.updateIcon()
+                let text = self.logLines.joined(separator: "\n")
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+                let url = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
+                    .appendingPathComponent("TouchBridge-Diagnose.txt")
+                try? text.write(to: url, atomically: true, encoding: .utf8)
+                let head = summary.interfaces == 0 ? "Kein Touch-Interface gefunden."
+                    : (summary.reports == 0 ? "Achtung: In 10 s kamen KEINE Touch-Reports an."
+                                            : "\(summary.reports) Touch-Reports empfangen.")
+                self.alert("Diagnose fertig", head + " In die Zwischenablage kopiert und als „TouchBridge-Diagnose.txt“ auf dem Schreibtisch gespeichert.")
+            }
+            if let c = ctl { c.probe { _ in finish() } } else { finish() }
         }
     }
 

@@ -62,14 +62,19 @@ weitere Optionen `--base-note 36`, `--scale minor`, `--bend-range 24`.
    (Standard bei MPE). Live 11/12 zeichnet MPE-Daten pro Note auf und zeigt sie im Clip-Editor („Note Expression“).
 
 ### Ohpe
-In Ohpe unter MIDI-Eingänge „TouchBridge“ aktivieren. Fader/Pads per MIDI-Learn zuweisen; für
-MPE-Instrumente Layout `keyboard` mit MPE, sonst `--no-mpe` mit dem Kanal, auf dem Ohpe hört.
+- **Standalone**: Zahnrad › MIDI › Eingang „TouchBridge“ aktivieren.
+- **Als Plug-in** (VST3/AU in Live, Logic …): MIDI kommt über die Spur – Spureingang „TouchBridge“ wählen.
+- Fader, XY und Pads per **MIDI learn** (Zahnrad › MIDI learn) auf Parameter, Mixer oder Transport legen.
+- Zum Spielen der Klangerzeuger MPE ausschalten (Menü bzw. `--no-mpe`) und den MIDI-Kanal wählen,
+  auf dem der Part hört – ein MPE-Keyboard verteilt die Noten sonst auf die Kanäle 2–16.
 
 ### livelooper
-In livelooper „TouchBridge“ als MIDI-Eingang wählen, dann **MIDI-Learn** einschalten, das gewünschte
-Bedienelement (Record/Play/Overdub, Lautstärke …) anklicken und Pad bzw. Fader auf dem Touch-Monitor
-berühren. Für Loop-Steuerung eignet sich das Layout `mixer` (8 Fader = Spurlautstärken, 8 Pads = Loop-Tasten)
-oder `performance` (XY-Feld für Effekte).
+- **Standalone**: in den Audio-/MIDI-Einstellungen „TouchBridge“ als MIDI-Eingang aktivieren;
+  **als Plug-in** kommt MIDI über den Spureingang der DAW.
+- **MIDI-Learn** einschalten, das Bedienelement (Record/Play/Overdub, Lautstärke, Loop-Länge …) anklicken und
+  Pad bzw. Fader auf dem Touch-Monitor berühren.
+- Passende Layouts: `mixer` (8 Fader = Spurlautstärken, 8 Pads = Loop-Tasten) oder `performance` (XY-Feld für Effekte),
+  jeweils mit `--no-mpe`.
 
 ## Installieren
 1. Unter **Releases** `TouchBridge-<version>.dmg` laden (Apple Silicon und Intel, ab macOS 12).

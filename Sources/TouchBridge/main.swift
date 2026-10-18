@@ -11,6 +11,7 @@ var dump = false
 var displayIndex: Int? = nil
 var ddcGet: [String] = []
 var ddcSet: [(String, Int)] = []
+var diagnoseSeconds: Double? = nil
 
 func parseInt(_ s: String) -> Int? {
     s.lowercased().hasPrefix("0x") ? Int(s.dropFirst(2), radix: 16) : Int(s)
@@ -23,6 +24,8 @@ func printUsage() {
       --list-displays        Bildschirme auflisten
       --display N            Touch auf Bildschirm N abbilden (Standard: erster externer)
       --dump                 Descriptor + Kontakte ausgeben, keine Events senden
+      --diagnose [SEK]       alle HID-Interfaces des Touch-Monitors nicht exklusiv öffnen, Input Mode setzen,
+                             Rohreports protokollieren (Standard 10 s), dann Ende
       --no-seize             Gerät nicht exklusiv öffnen
       --rotate 0|90|180|270  Panel-Drehung (im Uhrzeigersinn)
       --swap-xy --flip-x --flip-y   Achsen anpassen
@@ -49,6 +52,9 @@ while !args.isEmpty {
     case "--list-displays": listDisplays = true
     case "--display": displayIndex = Int(next())
     case "--dump": dump = true
+    case "--diagnose":
+        diagnoseSeconds = 10
+        if let n = args.first.flatMap(Double.init) { diagnoseSeconds = n; args.removeFirst() }
     case "--no-seize": settings.seize = false
     case "--rotate": settings.rotation = Int(next()) ?? 0
     case "--swap-xy": settings.swapXY = true
@@ -89,9 +95,21 @@ if listDisplays {
     exit(0)
 }
 
+if let secs = diagnoseSeconds {
+    print("Eingabeüberwachung: \(Permissions.inputMonitoringState)")
+    if !Permissions.inputMonitoring { Permissions.requestInputMonitoring() }
+    let probe = HIDProbe(vid: settings.vid ?? HIDProbe.anmiteVID, pid: settings.pid ?? HIDProbe.anmitePID) { print($0) }
+    probe.run(seconds: secs) { s in exit(s.interfaces == 0 ? 4 : (s.reports == 0 ? 5 : 0)) }
+    RunLoop.main.run()
+}
+
 if !ddcGet.isEmpty || !ddcSet.isEmpty {
     let ctl = DisplayControl(display: Displays.resolve(settings.displayID))
-    guard ctl.hasDDC else { print("❌ Bildschirm antwortet nicht auf DDC (oder Intel-Mac: dort noch nicht unterstützt)."); exit(3) }
+    guard ctl.hasDDC else {
+        print("❌ Bildschirm antwortet nicht auf DDC (oder Intel-Mac: dort noch nicht unterstützt).")
+        for l in ctl.probeDetails { print("   " + l) }
+        exit(3)
+    }
     func feature(_ s: String) -> DisplayControl.Feature? {
         ["brightness": .brightness, "contrast": .contrast, "volume": .volume][s]
     }
@@ -138,8 +156,12 @@ if settings.mode == .midi && !dump {
 }
 print(dump ? "Dump-Modus – berühre den Bildschirm. Ctrl+C beendet." : "Läuft. Ctrl+C beendet.")
 // Ctrl+C: klingende Noten beenden, bevor der Prozess (und damit der MIDI-Port) verschwindet
-signal(SIGINT, SIG_IGN)
-let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
-sigint.setEventHandler { service.stop(); exit(0) }
-sigint.resume()
+var signalSources: [DispatchSourceSignal] = []
+for sig in [SIGINT, SIGTERM, SIGHUP] {
+    signal(sig, SIG_IGN)
+    let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+    src.setEventHandler { service.stop(); exit(0) }   // Gerät freigeben (Seize lösen)
+    src.resume()
+    signalSources.append(src)
+}
 CFRunLoopRun()

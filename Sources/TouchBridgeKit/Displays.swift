@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import TouchBridgeCore
 
 public struct DisplayInfo: Equatable {
     public let id: CGDirectDisplayID
@@ -44,12 +45,10 @@ public enum Displays {
         activeIDs().filter { CGDisplayIsBuiltin($0) == 0 }
     }
 
-    /// Bevorzugt: gewählte ID, sonst erster externer Nicht-Hauptbildschirm, sonst erster externer, sonst Hauptbildschirm.
-    public static func resolve(_ preferred: CGDirectDisplayID?) -> CGDirectDisplayID {
-        let list = activeIDs()
-        if let p = preferred, list.contains(p) { return p }
-        return list.first(where: { CGDisplayIsBuiltin($0) == 0 && $0 != CGMainDisplayID() })
-            ?? list.first(where: { CGDisplayIsBuiltin($0) == 0 })
-            ?? CGMainDisplayID()
+    /// Bevorzugt: gewählte ID, sonst der externe Bildschirm, dessen Name zum Touch-Gerät passt (deviceHints,
+    /// z. B. Hersteller/Produkt „ANMITE“), sonst der einzige externe, sonst erster externer Nicht-Hauptbildschirm.
+    public static func resolve(_ preferred: CGDirectDisplayID?, deviceHints: [String] = []) -> CGDirectDisplayID {
+        let list = all().map { DisplayCandidate(id: $0.id, name: $0.name, isBuiltin: $0.isBuiltin, isMain: $0.isMain) }
+        return DisplayChoice.choose(list, preferred: preferred, deviceHints: deviceHints) ?? CGMainDisplayID()
     }
 }

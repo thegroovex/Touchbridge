@@ -18,6 +18,19 @@ public struct HIDField {
     public let isConstant: Bool
     public let collectionPath: [Int] // Collection-IDs, außen -> innen
 
+    /// Wert in einen Report schreiben (bitOffset relativ zu `base`).
+    public func write(_ value: Int64, into report: inout [UInt8], base: Int) {
+        guard bitSize > 0, bitSize <= 63 else { return }
+        let v = UInt64(bitPattern: value)
+        for b in 0..<bitSize {
+            let bit = bitOffset + b
+            let idx = base + bit / 8
+            if idx >= report.count { break }
+            let mask = UInt8(1) << UInt8(bit % 8)
+            if (v >> UInt64(b)) & 1 == 1 { report[idx] |= mask } else { report[idx] &= ~mask }
+        }
+    }
+
     public func read(_ report: UnsafeBufferPointer<UInt8>, base: Int) -> Int64 {
         guard bitSize > 0, bitSize <= 63 else { return 0 }
         var v: UInt64 = 0
@@ -48,6 +61,10 @@ public struct HIDCollection {
 
 public struct HIDDescriptor {
     public private(set) var fields: [HIDField] = []
+    /// Feature-Felder (z. B. Input Mode, Contact Count Maximum), Offsets je Feature-Report
+    public private(set) var featureFields: [HIDField] = []
+    /// Größe der Feature-Reports in Bits (ohne Report-ID-Byte)
+    public private(set) var featureReportBits: [UInt8: Int] = [:]
     public private(set) var collections: [HIDCollection] = []
     public private(set) var usesReportIDs = false
 
@@ -68,6 +85,7 @@ public struct HIDDescriptor {
         var usageMax: (UInt32, Int)? = nil
         var collStack: [Int] = []
         var inputOffsets: [UInt8: Int] = [:]
+        var featureOffsets: [UInt8: Int] = [:]
 
         func resolve(_ u: (UInt32, Int)) -> UInt32 {
             u.1 == 4 ? u.0 : ((g.usagePage << 16) | (u.0 & 0xFFFF))
@@ -124,6 +142,24 @@ public struct HIDDescriptor {
                         off += g.reportSize
                     }
                     inputOffsets[g.reportID] = off
+                case 0xB: // Feature
+                    let isConst = (u & 0x1) != 0
+                    let isVar = (u & 0x2) != 0
+                    let list = resolvedUsages()
+                    var off = featureOffsets[g.reportID] ?? 0
+                    let lmin = g.logMin
+                    let lmax = g.logMaxSigned < lmin ? g.logMaxUnsigned : g.logMaxSigned
+                    for n in 0..<max(0, g.reportCount) {
+                        let usage: UInt32 = list.isEmpty ? 0 : (isVar ? list[min(n, list.count - 1)] : list[0])
+                        featureFields.append(HIDField(reportID: g.reportID, bitOffset: off, bitSize: g.reportSize,
+                                                      usagePage: usage >> 16, usage: usage & 0xFFFF,
+                                                      logicalMin: lmin, logicalMax: lmax,
+                                                      isVariable: isVar, isConstant: isConst,
+                                                      collectionPath: collStack))
+                        off += g.reportSize
+                    }
+                    featureOffsets[g.reportID] = off
+                    featureReportBits[g.reportID] = off
                 case 0xA: // Collection
                     let list = resolvedUsages()
                     let usage = list.first ?? 0
@@ -132,7 +168,7 @@ public struct HIDDescriptor {
                     collStack.append(c.id)
                 case 0xC: // End Collection
                     _ = collStack.popLast()
-                default: break // Output / Feature: für Input-Offsets irrelevant
+                default: break // Output: irrelevant
                 }
                 clearLocals()
             case 1: // Global
@@ -160,6 +196,31 @@ public struct HIDDescriptor {
     }
 }
 
+// MARK: - Input Mode (Windows-Precision-Touch / HID Device Configuration)
+
+public extension HIDDescriptor {
+    /// Feature-Report, der den Controller in den gewünschten Input Mode schaltet
+    /// (Digitizer-Page 0x52; 0 = Maus, 1 = Single-Input, 2 = Multi-Input/Multi-Touch).
+    /// Device Index (0x53) und alle übrigen Felder des Reports werden 0. Bytes beginnen mit der Report-ID,
+    /// wenn der Descriptor Report-IDs benutzt (so erwartet es IOHIDDeviceSetReport).
+    func inputModeReport(mode: Int64 = 2) -> (reportID: UInt8, bytes: [UInt8])? {
+        guard let f = featureFields.first(where: {
+            $0.usagePage == Usage.pageDigitizer && $0.usage == Usage.inputMode && !$0.isConstant
+        }) else { return nil }
+        let bits = featureReportBits[f.reportID] ?? (f.bitOffset + f.bitSize)
+        let base = usesReportIDs ? 1 : 0
+        var bytes = [UInt8](repeating: 0, count: base + (bits + 7) / 8)
+        if usesReportIDs { bytes[0] = f.reportID }
+        f.write(max(f.logicalMin, min(f.logicalMax, mode)), into: &bytes, base: base)
+        return (f.reportID, bytes)
+    }
+
+    /// Feature „Contact Count Maximum“ (0x55), falls vorhanden – nur zur Diagnose.
+    var contactCountMaximumField: HIDField? {
+        featureFields.first { $0.usagePage == Usage.pageDigitizer && $0.usage == Usage.contactCountMax }
+    }
+}
+
 // MARK: - Touch layout (Finger-Slots pro Report)
 
 public enum Usage {
@@ -174,6 +235,11 @@ public enum Usage {
     public static let contactID: UInt32 = 0x51
     public static let contactCount: UInt32 = 0x54
     public static let tipPressure: UInt32 = 0x30
+    public static let deviceConfiguration: UInt32 = 0x0E
+    public static let inputMode: UInt32 = 0x52
+    public static let deviceIndex: UInt32 = 0x53
+    public static let contactCountMax: UInt32 = 0x55
+    public static let scanTime: UInt32 = 0x56
     public static let width: UInt32 = 0x48
     public static let height: UInt32 = 0x49
 }

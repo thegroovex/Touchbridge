@@ -8,7 +8,7 @@ public protocol EventSink: AnyObject {
     func move(_ p: CGPoint)
     func mouse(_ type: CGEventType, _ p: CGPoint, _ button: CGMouseButton, clicks: Int64)
     func click(_ p: CGPoint, right: Bool, clicks: Int64)
-    public func scroll(dx: Int32, dy: Int32, phase: Int64)
+    func scroll(dx: Int32, dy: Int32, phase: Int64)
     func key(_ code: CGKeyCode, flags: CGEventFlags)
 }
 

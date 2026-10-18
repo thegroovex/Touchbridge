@@ -19,6 +19,58 @@ TouchBridge liest diese Touch-Daten direkt, übernimmt das Gerät exklusiv und
 | 3 Finger links/rechts | Space wechseln (Ctrl ←/→) |
 | 3 Finger hoch / runter | Mission Control / App-Exposé |
 
+## MIDI-Modus (MIDI-Controller & MPE)
+Statt Maus & Gesten kann der Touch-Monitor als MIDI-Controller arbeiten. Menü › **Modus › MIDI**
+(oder `touchbridge --midi`). TouchBridge legt dann den virtuellen MIDI-Port **„TouchBridge“** an,
+sendet keine Maus-/Tastatur-Events mehr und übernimmt das Touch-Gerät exklusiv. Auf dem
+Touch-Bildschirm liegt ein durchsichtiges Overlay, das Fader, Pads, XY-Feld und Tasten zeigt
+(durchklickbar, abschaltbar unter **MIDI-Einstellungen › Layout auf dem Touch-Bildschirm anzeigen**).
+
+**Layouts** (Menü › MIDI-Einstellungen › Layout bzw. `--layout`):
+| Layout | Inhalt | MIDI |
+|---|---|---|
+| `mixer` | 8 Fader oben, 8 Pads unten | Fader CC 20–27, Pads ab Grundnote (Anschlag oben = laut) |
+| `keyboard` | 2 Tastenreihen (MPE-Keyboard), obere Reihe eine Oktave höher | Noten ab Grundnote, Skala wählbar |
+| `performance` | 4 Fader, XY-Feld, 8 Pads | Fader CC 20–23, XY = CC 16 (X) / CC 17 (Y), Pads ab Grundnote |
+
+- Jeder Finger bleibt an der Zone, in der er aufgesetzt hat (bis 10 Finger gleichzeitig) –
+  ein Fader lässt sich also nicht versehentlich in den Nachbarfader „ziehen“.
+- Fader: unten 0, oben 127. Pads: Note On beim Aufsetzen, Note Off beim Abheben.
+- **MPE** (Standard an, nur für Keyboard-Zonen): Lower Zone, Master = Kanal 1, jede Note auf einem
+  eigenen Kanal 2–16. Seitliches Rutschen = Pitch Bend relativ zum Anschlagpunkt (±48 Halbtöne,
+  zwischen den Tastenmitten wird auf die Skalentöne interpoliert), Hoch/Runter in der Taste = CC 74
+  („Slide“/Timbre), Druck = Channel Pressure – sofern der Monitor Druck oder Kontaktgröße meldet.
+  Beim Start werden RPN 6 (MPE-Konfiguration, 15 Member-Kanäle) und RPN 0 (Bend-Bereich) gesendet.
+  Mit MPE gehen Fader, Pads und XY auf Kanal 1.
+- **Ohne MPE** (`--no-mpe`): alles auf dem gewählten MIDI-Kanal, kein Pitch Bend, Druck als Poly Aftertouch.
+- Werte werden nur bei Änderung gesendet, höchstens ~250× pro Sekunde und Kanal.
+- Ausrichtung (Menü › Touch › Ausrichtung) gilt auch hier: Das Layout liegt immer richtig herum auf dem Bild.
+
+Kommandozeile: `touchbridge --midi --layout keyboard`, `touchbridge --midi --layout mixer --no-mpe --channel 10`,
+weitere Optionen `--base-note 36`, `--scale minor`, `--bend-range 24`.
+
+### Ableton Live
+1. TouchBridge im MIDI-Modus starten.
+2. Live › Einstellungen › **Link, Tempo & MIDI**: beim Eingang **TouchBridge** „Spur“ (Track) und für
+   MIDI-Mapping „Fernsteuerung“ (Remote) einschalten.
+3. **Fader/XY**: Cmd+M (MIDI-Map-Modus), Parameter in Live anklicken, Fader auf dem Touch-Monitor bewegen, Cmd+M beenden.
+4. **Pads**: MIDI-Spur mit Drum Rack, Eingang „TouchBridge“, Monitor „In“ oder Spur scharf schalten.
+   Für Drum Racks die Grundnote auf C1 (36) stellen.
+5. **MPE (Live 11 und 12)**: Layout `keyboard`, MPE an. MIDI-Spur mit MPE-fähigem Instrument
+   (z. B. Drift, Meld, Wavetable, Sampler – im Gerätemenü „MPE aktivieren“). Eingang „TouchBridge“,
+   im Eingangsmenü der Spur **MPE** wählen. Pitch-Bend-Bereich des Instruments auf 48 Halbtöne
+   (Standard bei MPE). Live 11/12 zeichnet MPE-Daten pro Note auf und zeigt sie im Clip-Editor („Note Expression“).
+
+### Ohpe
+In Ohpe unter MIDI-Eingänge „TouchBridge“ aktivieren. Fader/Pads per MIDI-Learn zuweisen; für
+MPE-Instrumente Layout `keyboard` mit MPE, sonst `--no-mpe` mit dem Kanal, auf dem Ohpe hört.
+
+### livelooper
+In livelooper „TouchBridge“ als MIDI-Eingang wählen, dann **MIDI-Learn** einschalten, das gewünschte
+Bedienelement (Record/Play/Overdub, Lautstärke …) anklicken und Pad bzw. Fader auf dem Touch-Monitor
+berühren. Für Loop-Steuerung eignet sich das Layout `mixer` (8 Fader = Spurlautstärken, 8 Pads = Loop-Tasten)
+oder `performance` (XY-Feld für Effekte).
+
 ## Installieren
 1. Unter **Releases** `TouchBridge-<version>.dmg` laden (Apple Silicon und Intel, ab macOS 12).
 2. DMG öffnen, **TouchBridge** auf „Programme“ ziehen.
@@ -30,6 +82,8 @@ Danach sitzt ein Hand-Symbol in der Menüleiste.
 
 ## Menüleiste
 - **Touch aktiv** an/aus, Status des erkannten Touch-Monitors
+- **Modus**: Maus & Gesten oder MIDI; **MIDI-Einstellungen**: Layout, MPE, MIDI-Kanal, Grundnote, Skala,
+  Pitch-Bend-Bereich, Overlay an/aus
 - **Bild**: Helligkeit, Kontrast, Lautstärke per DDC/CI (Apple-Silicon-Macs, wenn der Monitor DDC kann),
   dazu Software-Abdunkeln für jeden Bildschirm
 - **Touch**: Ziel-Bildschirm, Ausrichtung (0/90/180/270°, spiegeln), Scrollrichtung und -tempo, exklusiver Modus
@@ -47,13 +101,14 @@ Voraussetzung: Xcode Command Line Tools (`xcode-select --install`).
 
 ```bash
 swift build -c release
-swift test                       # Unit-Tests (Descriptor-Parser, Frames, Gesten)
+swift test                       # Unit-Tests (Descriptor-Parser, Frames, Gesten, MIDI/MPE)
 scripts/package.sh dev           # TouchBridge.app als DMG nach dist/
 ```
 
 ## Aufbau
-- `Sources/TouchBridgeCore` – HID-Descriptor-Parser, Frame-Zusammenbau (inkl. Hybrid-Modus), Gesten-Engine, Mapping, DDC-Pakete
-- `Sources/TouchBridgeKit` – IOKit-HID-Dienst, Bildschirme, Bildsteuerung (DDC über IOAVService / Gamma), Rechte
+- `Sources/TouchBridgeCore` – HID-Descriptor-Parser, Frame-Zusammenbau (inkl. Hybrid-Modus), Gesten-Engine, Mapping, DDC-Pakete,
+  `MIDI/` (Layouts, Finger-Tracker, MPE-Kanalvergabe, MIDI-Engine – plattformneutral, voll getestet)
+- `Sources/TouchBridgeKit` – IOKit-HID-Dienst, Bildschirme, Bildsteuerung (DDC über IOAVService / Gamma), CoreMIDI-Port, Rechte
 - `Sources/TouchBridgeApp` – Menüleisten-App
 - `Sources/TouchBridge` – Kommandozeilen-Tool
 - `Tests/TouchBridgeCoreTests` – XCTest mit typischen Touchscreen-Descriptoren und Gesten-Szenarien

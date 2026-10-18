@@ -8,8 +8,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let menu = NSMenu()
     private var service: TouchService!
     private var settings = SettingsStore.load() {
-        didSet { SettingsStore.save(settings); service.settings = settings; refreshControl() }
+        didSet { SettingsStore.save(settings); service.settings = settings; refreshControl(); updateOverlay(); updateIcon() }
     }
+    private let overlay = MIDIOverlay()
     private var control: DisplayControl?
     private var controlDisplay: CGDirectDisplayID = 0
     private var ddcValues: [DisplayControl.Feature: Int] = [:]
@@ -31,12 +32,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         service = TouchService(settings: settings)
         service.log = { [weak self] line in self?.appendLog(line) }
         service.onStatus = { [weak self] _ in self?.updateIcon() }
+        service.onMIDIUpdate = { [weak self] in self?.refreshOverlayContent() }
 
         if !Permissions.accessibility { Permissions.requestAccessibility() }
         if !Permissions.inputMonitoring { Permissions.requestInputMonitoring() }
         service.start()
         updateIcon()
         refreshControl()
+        updateOverlay()
 
         NotificationCenter.default.addObserver(self, selector: #selector(screensChanged),
                                                name: NSApplication.didChangeScreenParametersNotification, object: nil)
@@ -50,6 +53,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func screensChanged() {
         refreshControl()
         updateIcon()
+        updateOverlay()
+    }
+
+    // MARK: - MIDI-Overlay
+
+    /// Overlay nur im MIDI-Modus (und wenn eingeschaltet) auf dem Touch-Bildschirm zeigen.
+    private func updateOverlay() {
+        if settings.enabled && settings.mode == .midi && settings.showOverlay {
+            overlay.show(on: Displays.resolve(settings.displayID))
+            refreshOverlayContent()
+        } else {
+            overlay.hide()
+        }
+    }
+
+    private func refreshOverlayContent() {
+        guard overlay.isVisible else { return }
+        overlay.update(layout: service.midiEngine?.layout ?? settings.midiLayoutModel, engine: service.midiEngine)
     }
 
     private func appendLog(_ line: String) {
@@ -62,6 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let st = service.status
         let symbol: String
         if !settings.enabled { symbol = "hand.raised.slash" }
+        else if settings.mode == .midi { symbol = "pianokeys" }
         else if st.running && !st.devices.isEmpty { symbol = "hand.point.up.left.fill" }
         else { symbol = "hand.point.up.left" }
         if #available(macOS 11.0, *) {
@@ -78,6 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let e = st.lastError { return e }
         if st.devices.isEmpty { return "Kein Touch-Monitor gefunden" }
         return st.devices.joined(separator: ", ") + (st.exclusive ? "" : " (nicht exklusiv)")
+            + (settings.mode == .midi ? " – MIDI" : "")
     }
 
     // MARK: - Bildsteuerung
@@ -116,6 +139,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         st.isEnabled = false
         menu.addItem(st)
         menu.addItem(toggle("Touch aktiv", settings.enabled, #selector(toggleEnabled), key: "t"))
+        menu.addItem(.separator())
+
+        // Modus
+        menu.addItem(sectionHeader("Modus"))
+        for (i, m) in InputMode.allCases.enumerated() {
+            menu.addItem(toggle(m.title, settings.mode == m, #selector(selectMode(_:)), tag: i))
+        }
+        menu.addItem(submenu("MIDI-Einstellungen", midiMenu()))
         menu.addItem(.separator())
 
         // Bild
@@ -243,6 +274,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return m
     }
 
+    private func midiMenu() -> NSMenu {
+        let m = NSMenu()
+        let layout = NSMenu()
+        for (i, p) in MIDILayoutPreset.allCases.enumerated() {
+            layout.addItem(toggle(p.title, settings.midiLayout == p, #selector(selectLayout(_:)), tag: i))
+        }
+        m.addItem(submenu("Layout: " + settings.midiLayout.title, layout))
+        m.addItem(toggle("MPE (Kanal 1 Master, 2–16 pro Note)", settings.mpe, #selector(toggleMPE)))
+
+        let ch = NSMenu()
+        for c in 1...16 { ch.addItem(toggle("Kanal \(c)", settings.midiChannel == c, #selector(selectChannel(_:)), tag: c)) }
+        let chItem = submenu("MIDI-Kanal: \(settings.midiChannel)" + (settings.mpe ? " (nur ohne MPE)" : ""), ch)
+        m.addItem(chItem)
+
+        let base = NSMenu()
+        for n in stride(from: 24, through: 84, by: 12) {
+            base.addItem(toggle(midiNoteName(n), settings.baseNote == n, #selector(selectBaseNote(_:)), tag: n))
+        }
+        base.addItem(.separator())
+        base.addItem(action("Einen Halbton höher", #selector(baseNoteUp), enabled: settings.baseNote < 108))
+        base.addItem(action("Einen Halbton tiefer", #selector(baseNoteDown), enabled: settings.baseNote > 0))
+        m.addItem(submenu("Grundnote: " + midiNoteName(settings.baseNote), base))
+
+        let sc = NSMenu()
+        for (i, s) in Scale.allCases.enumerated() {
+            sc.addItem(toggle(s.title, settings.scale == s, #selector(selectScale(_:)), tag: i))
+        }
+        m.addItem(submenu("Skala (Keyboard): " + settings.scale.title, sc))
+
+        let br = NSMenu()
+        for r in [2, 12, 24, 48] {
+            br.addItem(toggle("±\(r) Halbtöne", settings.bendRange == r, #selector(selectBendRange(_:)), tag: r))
+        }
+        m.addItem(submenu("Pitch-Bend-Bereich (MPE): ±\(settings.bendRange)", br))
+        m.addItem(.separator())
+        m.addItem(toggle("Layout auf dem Touch-Bildschirm anzeigen", settings.showOverlay, #selector(toggleOverlay)))
+        let port = NSMenuItem(title: "MIDI-Port: „TouchBridge“", action: nil, keyEquivalent: "")
+        port.isEnabled = false
+        m.addItem(port)
+        return m
+    }
+
     private func permissionsMenu() -> NSMenu {
         let m = NSMenu()
         m.addItem(toggle("Bedienungshilfen" + (Permissions.accessibility ? "" : " – fehlt"),
@@ -264,6 +337,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func selectRotation(_ s: NSMenuItem) { settings.rotation = s.tag }
     @objc private func selectGain(_ s: NSMenuItem) { settings.scrollGain = Double(s.tag) / 10 }
     @objc private func selectDisplay(_ s: NSMenuItem) { settings.displayID = s.tag == 0 ? nil : UInt32(s.tag) }
+    @objc private func selectMode(_ s: NSMenuItem) {
+        let m = InputMode.allCases[s.tag]
+        if m == .gestures, !Permissions.accessibility { Permissions.requestAccessibility() }
+        settings.mode = m
+    }
+    @objc private func selectLayout(_ s: NSMenuItem) { settings.midiLayout = MIDILayoutPreset.allCases[s.tag] }
+    @objc private func toggleMPE() { settings.mpe.toggle() }
+    @objc private func selectChannel(_ s: NSMenuItem) { settings.midiChannel = s.tag }
+    @objc private func selectBaseNote(_ s: NSMenuItem) { settings.baseNote = s.tag }
+    @objc private func baseNoteUp() { settings.baseNote = min(108, settings.baseNote + 1) }
+    @objc private func baseNoteDown() { settings.baseNote = max(0, settings.baseNote - 1) }
+    @objc private func selectScale(_ s: NSMenuItem) { settings.scale = Scale.allCases[s.tag] }
+    @objc private func selectBendRange(_ s: NSMenuItem) { settings.bendRange = s.tag }
+    @objc private func toggleOverlay() { settings.showOverlay.toggle() }
 
     @objc private func restartService() {
         service.stop(); service.start(); updateIcon()

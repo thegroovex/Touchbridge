@@ -97,3 +97,20 @@ final class FrameAssemblerTests: XCTestCase {
         XCTAssertEqual(a.feed(r)?.contacts, [RawContact(id: 4, x: 50, y: 60)])
     }
 }
+
+final class PressureDescriptorTests: XCTestCase {
+    /// Finger-Slot mit zusätzlich Tip Pressure (8 bit, 0…255) und Width (8 bit, 0…200).
+    func testPressureAndWidthAreRead() {
+        var finger = Array(Fixtures.finger.dropLast()) // ohne End Collection
+        finger += [0x05, 0x0D, 0x09, 0x30, 0x15, 0x00, 0x26, 0xFF, 0x00, 0x75, 0x08, 0x95, 0x01, 0x81, 0x02,
+                   0x09, 0x48, 0x26, 0xC8, 0x00, 0x81, 0x02, 0xC0]
+        let d: [UInt8] = [0x05, 0x0D, 0x09, 0x04, 0xA1, 0x01, 0x85, 0x01] + finger
+            + [0x05, 0x0D, 0x09, 0x54, 0x95, 0x01, 0x75, 0x08, 0x15, 0x00, 0x25, 0x0A, 0x81, 0x02, 0xC0]
+        var a = TouchFrameAssembler(descriptor: HIDDescriptor(bytes: d))
+        XCTAssertNotNil(a.layouts[1]?.fingers.first?.pressure)
+        let r: [UInt8] = [1] + Fixtures.slot(tip: true, id: 2, x: 10, y: 20) + [255, 100] + [1]
+        let c = a.feed(r)?.contacts.first
+        XCTAssertEqual(c?.pressure ?? -1, 1, accuracy: 1e-9)
+        XCTAssertEqual(c?.size ?? -1, 0.5, accuracy: 1e-9)
+    }
+}

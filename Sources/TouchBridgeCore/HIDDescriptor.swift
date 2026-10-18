@@ -173,6 +173,9 @@ public enum Usage {
     public static let confidence: UInt32 = 0x47
     public static let contactID: UInt32 = 0x51
     public static let contactCount: UInt32 = 0x54
+    public static let tipPressure: UInt32 = 0x30
+    public static let width: UInt32 = 0x48
+    public static let height: UInt32 = 0x49
 }
 
 public struct FingerSlot {
@@ -181,6 +184,9 @@ public struct FingerSlot {
     public var x: HIDField?
     public var y: HIDField?
     public var confidence: HIDField?
+    public var pressure: HIDField?
+    public var width: HIDField?
+    public var height: HIDField?
 }
 
 public struct TouchLayout {
@@ -211,6 +217,9 @@ public struct TouchLayout {
             case (Usage.pageDigitizer, Usage.tipSwitch): slot.tip = slot.tip ?? f
             case (Usage.pageDigitizer, Usage.contactID): slot.contactID = slot.contactID ?? f
             case (Usage.pageDigitizer, Usage.confidence): slot.confidence = slot.confidence ?? f
+            case (Usage.pageDigitizer, Usage.tipPressure): slot.pressure = slot.pressure ?? f
+            case (Usage.pageDigitizer, Usage.width): slot.width = slot.width ?? f
+            case (Usage.pageDigitizer, Usage.height): slot.height = slot.height ?? f
             case (Usage.pageGenericDesktop, Usage.x): slot.x = slot.x ?? f
             case (Usage.pageGenericDesktop, Usage.y): slot.y = slot.y ?? f
             default: break
@@ -234,7 +243,13 @@ public struct RawContact: Equatable {
     public let id: Int
     public let x: Int64
     public let y: Int64
-    public init(id: Int, x: Int64, y: Int64) { self.id = id; self.x = x; self.y = y }
+    /// Druck 0…1 (Digitizer Tip Pressure), falls der Controller ihn meldet.
+    public let pressure: Double?
+    /// Kontaktgröße 0…1 (max. aus Width/Height, normiert auf deren logischen Bereich), falls gemeldet.
+    public let size: Double?
+    public init(id: Int, x: Int64, y: Int64, pressure: Double? = nil, size: Double? = nil) {
+        self.id = id; self.x = x; self.y = y; self.pressure = pressure; self.size = size
+    }
 }
 
 /// Setzt HID-Input-Reports zu vollständigen Touch-Frames zusammen.
@@ -280,10 +295,28 @@ public struct TouchFrameAssembler {
             if let conf = slot.confidence, layout.contactCount == nil, conf.read(r, base: base) == 0 { continue }
             guard tip, let xf = slot.x, let yf = slot.y else { continue }
             let id = slot.contactID.map { Int($0.read(r, base: base)) } ?? i
-            frame[id] = RawContact(id: id, x: xf.read(r, base: base), y: yf.read(r, base: base))
+            frame[id] = RawContact(id: id, x: xf.read(r, base: base), y: yf.read(r, base: base),
+                                   pressure: slot.pressure.map { Self.unit($0, r, base) },
+                                   size: Self.size(slot, r, base))
         }
         guard collected >= expected else { return nil }
         return (layout, frame.keys.sorted().map { frame[$0]! })
+    }
+
+    static func unit(_ f: HIDField, _ r: UnsafeBufferPointer<UInt8>, _ base: Int) -> Double {
+        let span = Double(f.logicalMax - f.logicalMin)
+        guard span > 0 else { return 0 }
+        return min(1, max(0, Double(f.read(r, base: base) - f.logicalMin) / span))
+    }
+
+    static func size(_ s: FingerSlot, _ r: UnsafeBufferPointer<UInt8>, _ base: Int) -> Double? {
+        let w = s.width.map { unit($0, r, base) }, h = s.height.map { unit($0, r, base) }
+        switch (w, h) {
+        case let (a?, b?): return max(a, b)
+        case let (a?, nil): return a
+        case let (nil, b?): return b
+        default: return nil
+        }
     }
 
     public mutating func feed(_ bytes: [UInt8]) -> (layout: TouchLayout, contacts: [RawContact])? {

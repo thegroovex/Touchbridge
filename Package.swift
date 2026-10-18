@@ -9,13 +9,13 @@ let package = Package(
         .executable(name: "TouchBridgeApp", targets: ["TouchBridgeApp"]),
     ],
     targets: [
-        // Plattformneutrale Logik: HID-Descriptor-Parser, Frames, Gesten, Mapping, DDC-Pakete
+        // Plattformneutrale Logik: HID-Descriptor-Parser, Frames, Gesten, Mapping, DDC-Pakete, MIDI/MPE-Engine
         .target(
             name: "TouchBridgeCore",
             path: "Sources/TouchBridgeCore",
             linkerSettings: [.linkedFramework("CoreGraphics")]
         ),
-        // macOS-Anbindung: IOKit-HID-Dienst, Bildschirme, Bildsteuerung (DDC / Gamma), Rechte
+        // macOS-Anbindung: IOKit-HID-Dienst, Bildschirme, Bildsteuerung (DDC / Gamma), CoreMIDI-Port, Rechte
         .target(
             name: "TouchBridgeKit",
             dependencies: ["TouchBridgeCore"],
@@ -23,6 +23,7 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("IOKit"),
                 .linkedFramework("CoreGraphics"),
+                .linkedFramework("CoreMIDI"),
                 .linkedFramework("ApplicationServices"),
                 .linkedFramework("AppKit"),
             ]

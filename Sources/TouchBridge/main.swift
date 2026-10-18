@@ -29,6 +29,13 @@ func printUsage() {
       --invert-scroll        Scrollrichtung umkehren
       --scroll-gain F        Scroll-Faktor (Standard 1.0)
       --vid 0x1234 --pid 0x5678     Bestimmtes Gerät wählen
+      --midi                 MIDI-Modus: virtueller MIDI-Port „TouchBridge“ statt Maus & Gesten
+      --layout mixer|keyboard|performance           MIDI-Layout (Standard: mixer)
+      --no-mpe               ohne MPE, alles auf einem Kanal (--channel)
+      --channel N            MIDI-Kanal 1–16 (ohne MPE; Standard 1)
+      --base-note N          Grundnote für Keyboard/Pads (MIDI-Nummer, Standard 48 = C2)
+      --scale NAME           Keyboard-Skala: chromatic|major|minor|pentatonic|minorPentatonic|dorian|blues
+      --bend-range N         MPE-Pitch-Bend-Bereich in Halbtönen (Standard 48)
       --brightness N | --contrast N | --volume N    Bildsteuerung per DDC (0–100), dann Ende
       --get brightness|contrast|volume              Wert per DDC lesen, dann Ende
     """)
@@ -51,6 +58,19 @@ while !args.isEmpty {
     case "--scroll-gain": settings.scrollGain = Double(next()) ?? 1.0
     case "--vid": settings.vid = parseInt(next())
     case "--pid": settings.pid = parseInt(next())
+    case "--midi": settings.mode = .midi
+    case "--layout":
+        let v = next()
+        guard let l = MIDILayoutPreset(rawValue: v) else { print("Unbekanntes Layout: \(v) (mixer|keyboard|performance)"); exit(1) }
+        settings.midiLayout = l
+    case "--no-mpe": settings.mpe = false
+    case "--channel": settings.midiChannel = max(1, min(16, Int(next()) ?? 1))
+    case "--base-note": settings.baseNote = max(0, min(108, Int(next()) ?? 48))
+    case "--scale":
+        let v = next()
+        guard let sc = Scale(rawValue: v) else { print("Unbekannte Skala: \(v)"); exit(1) }
+        settings.scale = sc
+    case "--bend-range": settings.bendRange = max(1, min(96, Int(next()) ?? 48))
     case "--brightness", "--contrast", "--volume": ddcSet.append((String(a.dropFirst(2)), Int(next()) ?? -1))
     case "--get": ddcGet.append(next())
     case "-h", "--help": printUsage(); exit(0)
@@ -95,7 +115,7 @@ if !ddcGet.isEmpty || !ddcSet.isEmpty {
 
 let service = TouchService(settings: settings)
 service.dumpMode = dump
-if !dump {
+if !dump && settings.mode == .gestures {
     Permissions.requestAccessibility()
     if !Permissions.accessibility {
         print("⚠️  Bitte unter Systemeinstellungen › Datenschutz & Sicherheit › Bedienungshilfen Zugriff geben und neu starten.")
@@ -109,6 +129,17 @@ service.start()
 guard service.status.running else { exit(2) }
 let b = CGDisplayBounds(service.targetDisplay)
 print("🖥  Ziel-Bildschirm: \(Int(b.width))x\(Int(b.height)) @ (\(Int(b.minX)),\(Int(b.minY)))")
+if settings.mode == .midi && !dump {
+    print("🎛  MIDI-Modus – Layout \(settings.midiLayout.title), " + (settings.mpe ? "MPE" : "Kanal \(settings.midiChannel)")
+          + ", MIDI-Port „TouchBridge“.")
+    for (i, z) in settings.midiLayoutModel.zones.enumerated() {
+        print(String(format: "   [%2d] %@  x %.2f–%.2f  y %.2f–%.2f", i, z.name, z.rect.x, z.rect.maxX, z.rect.y, z.rect.maxY))
+    }
+}
 print(dump ? "Dump-Modus – berühre den Bildschirm. Ctrl+C beendet." : "Läuft. Ctrl+C beendet.")
-signal(SIGINT) { _ in exit(0) }
+// Ctrl+C: klingende Noten beenden, bevor der Prozess (und damit der MIDI-Port) verschwindet
+signal(SIGINT, SIG_IGN)
+let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+sigint.setEventHandler { service.stop(); exit(0) }
+sigint.resume()
 CFRunLoopRun()

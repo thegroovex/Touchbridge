@@ -5,6 +5,12 @@ import IOKit
 import IOKit.hid
 import TouchBridgeCore
 
+/// Betriebsart: Touch als Maus & Gesten oder als MIDI-Controller.
+public enum InputMode: String, Codable, CaseIterable {
+    case gestures, midi
+    public var title: String { self == .gestures ? "Maus & Gesten" : "MIDI" }
+}
+
 /// Einstellungen, die CLI und Menüleisten-App teilen.
 public struct TouchSettings: Codable, Equatable {
     public var enabled = true
@@ -18,7 +24,47 @@ public struct TouchSettings: Codable, Equatable {
     public var seize = true
     public var vid: Int? = nil
     public var pid: Int? = nil
+    // MIDI-Modus
+    public var mode: InputMode = .gestures
+    public var midiLayout: MIDILayoutPreset = .mixer
+    public var mpe = true
+    public var midiChannel = 1                // 1…16 (ohne MPE bzw. für Fader/Pads/XY ohne MPE)
+    public var baseNote = 48                  // C2 (Ableton-Zählung, C3 = 60)
+    public var scale: Scale = .chromatic
+    public var bendRange = 48
+    public var showOverlay = true
     public init() {}
+
+    enum CodingKeys: String, CodingKey {
+        case enabled, displayID, rotation, flipX, flipY, swapXY, invertScroll, scrollGain, seize, vid, pid
+        case mode, midiLayout, mpe, midiChannel, baseNote, scale, bendRange, showOverlay
+    }
+
+    /// Fehlende Schlüssel (ältere gespeicherte Einstellungen) fallen auf die Standardwerte zurück.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = TouchSettings()
+        func v<T: Decodable>(_ k: CodingKeys, _ def: T) -> T { ((try? c.decodeIfPresent(T.self, forKey: k)) ?? nil) ?? def }
+        enabled = v(.enabled, d.enabled)
+        displayID = (try? c.decodeIfPresent(UInt32.self, forKey: .displayID)) ?? nil
+        rotation = v(.rotation, d.rotation)
+        flipX = v(.flipX, d.flipX)
+        flipY = v(.flipY, d.flipY)
+        swapXY = v(.swapXY, d.swapXY)
+        invertScroll = v(.invertScroll, d.invertScroll)
+        scrollGain = v(.scrollGain, d.scrollGain)
+        seize = v(.seize, d.seize)
+        vid = (try? c.decodeIfPresent(Int.self, forKey: .vid)) ?? nil
+        pid = (try? c.decodeIfPresent(Int.self, forKey: .pid)) ?? nil
+        mode = v(.mode, d.mode)
+        midiLayout = v(.midiLayout, d.midiLayout)
+        mpe = v(.mpe, d.mpe)
+        midiChannel = max(1, min(16, v(.midiChannel, d.midiChannel)))
+        baseNote = max(0, min(108, v(.baseNote, d.baseNote)))
+        scale = v(.scale, d.scale)
+        bendRange = max(1, min(96, v(.bendRange, d.bendRange)))
+        showOverlay = v(.showOverlay, d.showOverlay)
+    }
 
     public var mapping: TouchMapping { TouchMapping(rotation: rotation, flipX: flipX, flipY: flipY, swapXY: swapXY) }
     public func gestureConfig(base: GestureConfig = GestureConfig()) -> GestureConfig {
@@ -27,6 +73,16 @@ public struct TouchSettings: Codable, Equatable {
         g.scrollGain = CGFloat(scrollGain)
         return g
     }
+    public var midiConfig: MIDIConfig {
+        var c = MIDIConfig()
+        c.mpe = mpe
+        c.channel = max(0, min(15, midiChannel - 1))
+        c.bendRange = bendRange
+        return c
+    }
+    public var midiLayoutModel: MIDILayout { midiLayout.build(baseNote: baseNote, scale: scale) }
+    /// Im MIDI-Modus wird das Gerät immer exklusiv angefordert (sonst bewegt macOS zusätzlich den Cursor).
+    public var effectiveSeize: Bool { seize || mode == .midi }
 }
 
 public enum Permissions {
@@ -51,12 +107,30 @@ public final class TouchService {
     public var settings: TouchSettings {
         didSet {
             engine.config = settings.gestureConfig(base: gestureBase)
-            if settings.enabled != oldValue.enabled || settings.seize != oldValue.seize
-                || settings.vid != oldValue.vid || settings.pid != oldValue.pid {
+            if settings.mode != oldValue.mode {
+                // laufende Geste bzw. klingende Noten sauber beenden
+                if oldValue.mode == .gestures, engine.isActive { engine.update([]) }
+                if oldValue.mode == .midi { midiEngine?.releaseAll() }
+            }
+            if let m = midiEngine {
+                m.setLayout(settings.midiLayoutModel)
+                m.setConfig(settings.midiConfig)
+            }
+            if settings.mode != oldValue.mode || settings.midiLayout != oldValue.midiLayout
+                || settings.baseNote != oldValue.baseNote || settings.scale != oldValue.scale {
+                onMIDIUpdate?()
+            }
+            if settings.enabled != oldValue.enabled || settings.effectiveSeize != oldValue.effectiveSeize
+                || settings.vid != oldValue.vid || settings.pid != oldValue.pid || settings.mode != oldValue.mode {
                 if running { stop(); start() }
             }
         }
     }
+    /// Wird im MIDI-Modus nach jedem Frame aufgerufen (Overlay-Anzeige).
+    public var onMIDIUpdate: (() -> Void)?
+    /// MIDI-Engine (nur im MIDI-Modus angelegt) – Layout, Finger und Werte für das Overlay.
+    public private(set) var midiEngine: MIDIEngine?
+    private var midiOutput: CoreMIDIOutput?
     /// Nur Kontakte protokollieren, keine Events senden (Diagnose / --dump).
     public var dumpMode = false
     public var log: (String) -> Void = { print($0) }
@@ -103,9 +177,10 @@ public final class TouchService {
         }, ctx)
         IOHIDManagerScheduleWithRunLoop(m, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
 
-        var exclusive = settings.seize
-        var rc = IOHIDManagerOpen(m, IOOptionBits(settings.seize ? kIOHIDOptionsTypeSeizeDevice : kIOHIDOptionsTypeNone))
-        if rc != kIOReturnSuccess && settings.seize {
+        let seize = settings.effectiveSeize
+        var exclusive = seize
+        var rc = IOHIDManagerOpen(m, IOOptionBits(seize ? kIOHIDOptionsTypeSeizeDevice : kIOHIDOptionsTypeNone))
+        if rc != kIOReturnSuccess && seize {
             log(String(format: "⚠️  Exklusiver Zugriff fehlgeschlagen (0x%08X) – weiter ohne. macOS bewegt dann evtl. zusätzlich den Cursor.", rc))
             exclusive = false
             rc = IOHIDManagerOpen(m, IOOptionBits(kIOHIDOptionsTypeNone))
@@ -118,11 +193,16 @@ public final class TouchService {
         }
         status = Status(running: true, devices: devices.map(\.name), exclusive: exclusive, lastError: nil)
 
+        let midi = settings.mode == .midi && !dumpMode
+        if midi { startMIDI() }
+
         // commonModes: Touch funktioniert auch, während ein Menü oder Dialog offen ist.
-        let t = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
+        // Im MIDI-Modus schneller (4 ms), damit gedrosselte Werte zügig nachgesendet werden.
+        let t = Timer(timeInterval: midi ? 0.004 : 0.05, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             for d in self.devices { d.checkStale(self.staleTimeout) }
-            if !self.dumpMode { self.engine.tick() }
+            if self.dumpMode { return }
+            if self.settings.mode == .midi { self.midiEngine?.tick() } else { self.engine.tick() }
         }
         RunLoop.main.add(t, forMode: .common)
         timer = t
@@ -133,6 +213,8 @@ public final class TouchService {
         running = false
         timer?.invalidate(); timer = nil
         if engine.isActive { engine.update([]) }
+        midiEngine?.releaseAll()
+        onMIDIUpdate?()
         devices.removeAll()
         if let m = manager {
             IOHIDManagerUnscheduleFromRunLoop(m, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
@@ -140,6 +222,26 @@ public final class TouchService {
         }
         manager = nil
         status = Status(running: false)
+    }
+
+    /// Legt den virtuellen MIDI-Port (einmal pro Prozess) und die Engine an und sendet die MPE-Konfiguration.
+    private func startMIDI() {
+        if midiOutput == nil { midiOutput = CoreMIDIOutput(name: "TouchBridge", log: log) }
+        guard let out = midiOutput else {
+            status.lastError = "MIDI-Port konnte nicht angelegt werden"
+            return
+        }
+        if let m = midiEngine {
+            m.setLayout(settings.midiLayoutModel)
+            m.setConfig(settings.midiConfig)
+            m.start()
+        } else {
+            let m = MIDIEngine(sink: out, layout: settings.midiLayoutModel, config: settings.midiConfig)
+            midiEngine = m
+            m.start()
+        }
+        log("🎛  MIDI-Modus: Layout \(settings.midiLayout.title), " + (settings.mpe ? "MPE (Kanal 1 Master, 2–16 Member)" : "Kanal \(settings.midiChannel)"))
+        onMIDIUpdate?()
     }
 
     private func attach(_ device: IOHIDDevice) {
@@ -162,6 +264,16 @@ public final class TouchService {
         guard let f0 = layout.fingers.first, let xf = f0.x, let yf = f0.y else { return }
         let rect = CGDisplayBounds(targetDisplay)
         let map = settings.mapping
+        if settings.mode == .midi && !dumpMode {
+            let touches = contacts.map { c -> TouchPoint in
+                let p = map.apply(TouchMapping.normalize(c.x, min: xf.logicalMin, max: xf.logicalMax),
+                                  TouchMapping.normalize(c.y, min: yf.logicalMin, max: yf.logicalMax))
+                return TouchPoint(id: c.id, x: Double(p.x), y: Double(p.y), pressure: c.pressure, size: c.size)
+            }
+            midiEngine?.update(touches)
+            onMIDIUpdate?()
+            return
+        }
         let points = contacts.map {
             map.screenPoint(TouchMapping.normalize($0.x, min: xf.logicalMin, max: xf.logicalMax),
                             TouchMapping.normalize($0.y, min: yf.logicalMin, max: yf.logicalMax), in: rect)
@@ -177,6 +289,7 @@ public final class TouchService {
 
     fileprivate func releaseIfActive() {
         if engine.isActive { engine.update([]) }
+        if let m = midiEngine, !m.fingerInfo.isEmpty { m.releaseAll(); onMIDIUpdate?() }
     }
 }
 

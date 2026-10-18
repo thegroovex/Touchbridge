@@ -3,6 +3,7 @@
 # Aufruf: scripts/package.sh <version>   (Ausgabe: dist/TouchBridge-<version>-macOS-universal.zip)
 set -euo pipefail
 ver="${1:-dev}"
+swift build -c release --arch arm64 --arch x86_64
 bin="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/TouchBridge"
 test -x "$bin"
 lipo "$bin" -verify_arch arm64 x86_64

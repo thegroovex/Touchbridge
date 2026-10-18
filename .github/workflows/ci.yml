@@ -1,0 +1,204 @@
+name: CI
+
+# Every push to main, every pull request and every manual run (Actions -> CI -> Run workflow):
+# macOS universal build (arm64 + x86_64), unit tests (XCTest, parallel) and the release package.
+#   build-test   swift build (universal, release) + swift test --parallel on Apple silicon; SwiftPM build
+#                cache via actions/cache; the package zip is uploaded as artefact "TouchBridge-macOS-universal".
+#   test-intel   swift test on an Intel runner (x86_64 behaviour of the parser / gestures).
+#   release      on a published GitHub release: the package is built with the release tag as version
+#                and attached together with SHA256SUMS.txt.
+# Pull requests that only change docs/** or *.md skip the builds; the "CI result" job reports for every run.
+# On a failure the build/test log tail is written to the job summary and uploaded as artefact "ci-logs".
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+# A new push to a pull request cancels its running CI; runs on main are never cancelled.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.ref, github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------------- what to run
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.result.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        if: github.event_name == 'push'
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        id: filter
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        with:
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '**'
+              - '!docs/**'
+              - '!**/*.md'
+      - id: result
+        env:
+          EVENT: ${{ github.event_name }}
+          FILTER_CODE: ${{ steps.filter.outputs.code }}
+        run: |
+          code=true
+          if [ "$EVENT" = pull_request ] || [ "$EVENT" = push ]; then
+            [ "$FILTER_CODE" = true ] || code=false
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "code changes: $code"
+
+  docs-only:
+    name: Docs only (builds skipped)
+    needs: changes
+    if: needs.changes.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Only docs/** or *.md changed - builds and tests are skipped."
+
+  # ---------------------------------------------------------------------------------- macOS
+  build-test:
+    name: macOS universal build + tests
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: SwiftPM build cache
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: spm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-${{ hashFiles('Sources/**', 'Tests/**') }}
+          restore-keys: |
+            spm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-
+            spm-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build (release, arm64 + x86_64)
+        run: |
+          set -o pipefail
+          mkdir -p ci-logs
+          swift build -c release --arch arm64 --arch x86_64 2>&1 | tee ci-logs/build.log
+
+      - name: Tests
+        run: |
+          set -o pipefail
+          swift test --parallel 2>&1 | tee ci-logs/test.log
+
+      - name: Smoke test (CLI starts, help + display list)
+        run: |
+          set -o pipefail
+          bin="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/TouchBridge"
+          "$bin" --help | tee ci-logs/smoke.log
+          "$bin" --list-displays | tee -a ci-logs/smoke.log
+
+      - name: Package
+        run: |
+          set -o pipefail
+          ver="${GITHUB_SHA::7}"
+          scripts/package.sh "$ver" 2>&1 | tee ci-logs/package.log
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TouchBridge-macOS-universal
+          path: |
+            dist/*.zip
+            dist/SHA256SUMS.txt
+
+      - name: Failure report
+        if: failure()
+        run: |
+          {
+            echo "## Build/test log (tail)"
+            for f in ci-logs/*.log; do
+              [ -f "$f" ] || continue
+              echo "### $f"; echo '```'; grep -E "error:|warning:|failed|XCTAssert" "$f" | head -60; echo '...'; tail -n 80 "$f"; echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: ci-logs
+          path: ci-logs
+          if-no-files-found: ignore
+
+  test-intel:
+    name: Tests (Intel x86_64)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: .build
+          key: spm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-${{ hashFiles('Sources/**', 'Tests/**') }}
+          restore-keys: |
+            spm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-
+            spm-${{ runner.os }}-${{ runner.arch }}-
+      - name: Tests
+        run: swift test --parallel
+
+  # ---------------------------------------------------------------------------------- release
+  release:
+    name: Attach release package
+    needs: [build-test, test-intel]
+    if: github.event_name == 'release'
+    runs-on: macos-15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build package
+        run: scripts/package.sh "${GITHUB_REF_NAME#v}"
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/*.zip dist/SHA256SUMS.txt --clobber --repo "$GITHUB_REPOSITORY"
+
+  # ---------------------------------------------------------------------------------- gate
+  result:
+    name: CI result
+    if: always()
+    needs: [changes, docs-only, build-test, test-intel, release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: All jobs passed or were skipped on purpose
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          CODE: ${{ needs.changes.outputs.code }}
+        run: |
+          echo "$RESULTS" | python3 -c '
+          import json, os, sys
+          needs = json.load(sys.stdin)
+          code = os.environ["CODE"] == "true"
+          bad = []
+          for name, n in needs.items():
+              r = n["result"]
+              print(f"{name:12} {r}")
+              if r in ("failure", "cancelled"):
+                  bad.append(name)
+              if code and r == "skipped" and name not in ("docs-only", "release"):
+                  bad.append(name)
+          if needs["changes"]["result"] != "success":
+              bad.append("changes")
+          sys.exit(f"failed: {bad}" if bad else 0)'

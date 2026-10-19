@@ -27,7 +27,9 @@ sed -e "s/__VERSION__/${num:-0.0.0}/" -e "s/__BUILD__/$build/" Resources/Info.pl
 # vollständige Version (inkl. -preview…) für den In-App-Updater
 plutil -insert TouchBridgeVersion -string "$ver" "$app/Contents/Info.plist"
 plutil -lint "$app/Contents/Info.plist"
-if [ -f Resources/AppIcon.icns ]; then cp Resources/AppIcon.icns "$app/Contents/Resources/"; fi
+# App-Icon (scripts/icon/make_icon.py) + Menüleisten-Glyph (Template, 18 pt @1x/@2x)
+cp Resources/AppIcon.icns Resources/MenuBarIcon.png Resources/MenuBarIcon@2x.png "$app/Contents/Resources/"
+test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$app/Contents/Info.plist")" = AppIcon
 printf 'APPL????' > "$app/Contents/PkgInfo"
 
 # Innen nach außen signieren
@@ -72,12 +74,27 @@ TouchBridge $ver
      tccutil reset Accessibility com.groovex.touchbridge
    dann TouchBridge starten und erlauben (oder Menü › Berechtigungen ›
    „Berechtigungen zurücksetzen …“).
-4. Das Hand-Symbol in der Menüleiste steuert Touch und Bild.
+4. Das TouchBridge-Symbol (Bildschirm mit drei Punkten) in der Menüleiste steuert Touch und Bild.
 
 Mehr: https://github.com/thegroovex/Touchbridge
 TXT
 
-hdiutil create -volname "TouchBridge $ver" -srcfolder dist/stage -ov -format UDZO -fs HFS+ "dist/TouchBridge-$ver.dmg"
+# DMG mit Volume-Icon (.VolumeIcon.icns + Custom-Icon-Flag am Volume); ohne SetFile ohne Volume-Icon
+cp Resources/AppIcon.icns dist/stage/.VolumeIcon.icns
+hdiutil create -volname "TouchBridge $ver" -srcfolder dist/stage -ov -format UDRW -fs HFS+ dist/rw.dmg
+mnt="$(mktemp -d)"
+hdiutil attach -nobrowse -noautoopen -readwrite -mountpoint "$mnt" dist/rw.dmg >/dev/null
+if command -v SetFile >/dev/null 2>&1 || xcrun -f SetFile >/dev/null 2>&1; then
+  sf="$(command -v SetFile || xcrun -f SetFile)"
+  "$sf" -c icnC "$mnt/.VolumeIcon.icns" || true
+  "$sf" -a C "$mnt" && echo "Volume-Icon gesetzt"
+else
+  echo "Hinweis: SetFile fehlt – DMG ohne Volume-Icon"
+fi
+sync
+hdiutil detach "$mnt" >/dev/null || hdiutil detach -force "$mnt" >/dev/null
+hdiutil convert dist/rw.dmg -format UDZO -o "dist/TouchBridge-$ver.dmg" -ov
+rm -f dist/rw.dmg
 rm -rf dist/stage
 (cd dist && shasum -a 256 "TouchBridge-$ver.dmg" > SHA256SUMS.txt)
 ls -la dist

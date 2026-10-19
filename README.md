@@ -168,7 +168,7 @@ Built-In). Hält TouchBridge selbst ein Interface doppelt, steht das als Fehler 
    alternativ Systemeinstellungen › Datenschutz & Sicherheit › „Trotzdem öffnen“.
 4. **Gerätesteuerung und Datenzugriff** (älteres macOS: **Bedienungshilfen**) und **Eingabeüberwachung** für TouchBridge erlauben.
 
-Danach sitzt ein Hand-Symbol in der Menüleiste.
+Danach sitzt das TouchBridge-Symbol (Bildschirm mit drei Berührungspunkten) in der Menüleiste.
 
 ## Menüleiste
 - **Touch aktiv** an/aus, Status des erkannten Touch-Monitors
@@ -195,6 +195,9 @@ swift build -c release
 swift test                       # Unit-Tests (Descriptor-Parser, Frames, Gesten, MIDI/MPE)
 scripts/package.sh dev           # TouchBridge.app als DMG nach dist/
 ```
+
+App-Icon (Entwurf „Multitouch“, Liquid Glass) und Menüleisten-Glyph werden mit
+`python3 scripts/icon/make_icon.py` (pip: `cairosvg pillow`) nach `Resources/` erzeugt und sind eingecheckt.
 
 ## Aufbau
 - `Sources/TouchBridgeCore` – HID-Descriptor-Parser, Frame-Zusammenbau (inkl. Hybrid-Modus), Gesten-Engine, Mapping, DDC-Pakete,

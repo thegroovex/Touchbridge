@@ -256,16 +256,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if logLines.count > 2000 { logLines.removeFirst(logLines.count - 2000) }
     }
 
+    /// Menüleisten-Glyph aus dem App-Bundle (Resources/MenuBarIcon.png + @2x), als Template-Bild,
+    /// damit macOS es in heller/dunkler Menüleiste passend einfärbt. nil außerhalb eines App-Bundles.
+    private lazy var menuBarGlyph: NSImage? = {
+        guard let img = Bundle.main.image(forResource: "MenuBarIcon") else { return nil }
+        img.size = NSSize(width: 18, height: 18)
+        img.isTemplate = true
+        img.accessibilityDescription = "TouchBridge"
+        return img
+    }()
+
     private func updateIcon() {
         guard let button = statusItem.button else { return }
         let st = service.status
-        let symbol: String
-        if !settings.enabled { symbol = "hand.raised.slash" }
-        else if service.inputMonitoringState.isProblem || st.lastError != nil { symbol = "exclamationmark.triangle" }
-        else if settings.mode == .midi { symbol = "pianokeys" }
-        else if st.running && !st.devices.isEmpty { symbol = "hand.point.up.left.fill" }
-        else { symbol = "hand.point.up.left" }
-        if #available(macOS 11.0, *) {
+        let problem = service.inputMonitoringState.isProblem || st.lastError != nil
+        if settings.enabled && !problem, let glyph = menuBarGlyph {
+            // Multitouch-Glyph (App-Icon-Motiv); „verbunden“ voll, „wartet auf Gerät“ gedimmt
+            button.image = glyph
+            button.appearsDisabled = !(st.running && !st.devices.isEmpty) && settings.mode != .midi
+        } else if #available(macOS 11.0, *) {
+            button.appearsDisabled = false
+            let symbol: String
+            if !settings.enabled { symbol = "hand.raised.slash" }
+            else if problem { symbol = "exclamationmark.triangle" }
+            else if settings.mode == .midi { symbol = "pianokeys" }
+            else if st.running && !st.devices.isEmpty { symbol = "hand.point.up.left.fill" }
+            else { symbol = "hand.point.up.left" }
             button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "TouchBridge")
         } else {
             button.title = "TB"

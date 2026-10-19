@@ -137,6 +137,19 @@ jobs:
             test -L "$mnt/Programme"
             test -f "$mnt/Zuerst lesen.txt"
             plutil -p "$app/Contents/Info.plist" | grep -E 'CFBundleIdentifier|LSUIElement|CFBundleExecutable'
+            # App-Icon + Menüleisten-Glyph im Bundle, CFBundleIconFile gesetzt, icns lesbar (alle Größen)
+            test -s "$app/Contents/Resources/AppIcon.icns"
+            test -s "$app/Contents/Resources/MenuBarIcon.png"
+            test -s "$app/Contents/Resources/MenuBarIcon@2x.png"
+            test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$app/Contents/Info.plist")" = AppIcon
+            iconset="$(mktemp -d)/AppIcon.iconset"
+            iconutil -c iconset -o "$iconset" "$app/Contents/Resources/AppIcon.icns"
+            ls "$iconset"
+            for f in icon_16x16 icon_16x16@2x icon_32x32 icon_32x32@2x icon_128x128 icon_128x128@2x \
+                     icon_256x256 icon_256x256@2x icon_512x512 icon_512x512@2x; do test -s "$iconset/$f.png"; done
+            sips -g pixelWidth "$iconset/icon_512x512@2x.png" | grep -q 'pixelWidth: 1024'
+            test -s "$mnt/.VolumeIcon.icns" && echo "Volume-Icon vorhanden"
+            echo "App-Icon OK"
             lipo -info "$app/Contents/MacOS/TouchBridgeApp"
             lipo "$app/Contents/MacOS/TouchBridgeApp" -verify_arch arm64 x86_64
             codesign --verify --deep --strict --verbose=2 "$app"

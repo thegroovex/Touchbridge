@@ -194,6 +194,10 @@ class Bridge:
         with self.lock:
             self._close_locked()
             self.ctrl, self.intr, self.host = c, i, host
+            try:
+                i.settimeout(1.0)   # Senden darf den Touch-Lesethread nie dauerhaft blockieren
+            except OSError:
+                pass
         try:
             os.makedirs(STATE_DIR, exist_ok=True)
             json.dump({"host": host}, open(HOST_FILE, "w"))
@@ -302,15 +306,25 @@ class Bridge:
             except OSError as e:
                 log("Öffnen fehlgeschlagen:", e); time.sleep(2); continue
             n = 0
+            burst, burst_start, last_rx = 0, 0.0, 0.0
             try:
                 while True:
                     r, _, _ = select.select([fd], [], [], 5)
+                    now = time.time()
+                    if burst and now - last_rx > 2:
+                        log(f"Berührung: {burst} Reports in {last_rx - burst_start:.1f} s"
+                            + ("" if self.intr else " – kein Mac verbunden, nicht gesendet"))
+                        burst = 0
                     if not r:
                         continue
                     data = os.read(fd, 64)
                     if not data:
                         break
                     if data[0] == 0x0D:
+                        if not burst:
+                            burst_start = now
+                        burst += 1
+                        last_rx = now
                         self.send_report(data)
                         n += 1
                         if n == 1:

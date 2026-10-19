@@ -67,9 +67,11 @@ TouchBridge $ver
 2. Beim ersten Öffnen: Rechtsklick auf TouchBridge › Öffnen
    (oder Systemeinstellungen › Datenschutz & Sicherheit › „Trotzdem öffnen“).
 3. Bedienungshilfen und Eingabeüberwachung für TouchBridge erlauben.
-   Kommst du von 0.3.0 oder älter: TouchBridge vorher in beiden Listen
-   (Systemeinstellungen › Datenschutz & Sicherheit) mit „–“ entfernen und
-   neu erlauben. Ab 0.3.1 bleiben die Rechte über Updates erhalten.
+   Nach einem Update ggf. einmalig im Terminal:
+     tccutil reset ListenEvent com.groovex.touchbridge
+     tccutil reset Accessibility com.groovex.touchbridge
+   dann TouchBridge starten und erlauben (oder Menü › Berechtigungen ›
+   „Berechtigungen zurücksetzen …“).
 4. Das Hand-Symbol in der Menüleiste steuert Touch und Bild.
 
 Mehr: https://github.com/thegroovex/Touchbridge

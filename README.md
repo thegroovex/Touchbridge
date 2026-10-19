@@ -81,19 +81,26 @@ TouchBridge braucht **Eingabeüberwachung** (sonst liefert macOS keine Touch-Rep
 **Bedienungshilfen** (Events senden, Systemzeiger-Filter). Beide Dialoge kommen nur **einmal** automatisch;
 danach zeigt das Menü nur noch einen Hinweis.
 
-- **Stabile Signatur (ab 0.3.1):** Die App ist mit dem selbstsignierten Zertifikat „TouchBridge Self-Signed (groovex)“
-  signiert, mit fester Designated Requirement
-  `identifier "com.groovex.touchbridge" and certificate leaf = H"881bb1364953182615a236964e3ae7d651efef72"`
-  (CLI: `com.groovex.touchbridge.cli`). macOS erkennt neue Versionen dadurch als dieselbe App – die Rechte bleiben über
-  Updates erhalten. Der In-App-Updater installiert nur Bundles mit demselben Leaf-Zertifikat.
-- **Umstieg von 0.3.0 oder älter (einmalig):** Diese Versionen waren ad-hoc signiert; ihre Einträge passen nicht mehr.
-  Systemeinstellungen › Datenschutz & Sicherheit › **Eingabeüberwachung** und **Bedienungshilfen**: TouchBridge mit „–“
-  entfernen, neu hinzufügen bzw. beim nächsten Dialog erlauben. Alternativ Menü › Berechtigungen ›
-  **Berechtigungen zurücksetzen …** (führt `tccutil reset ListenEvent com.groovex.touchbridge` und
-  `tccutil reset Accessibility com.groovex.touchbridge` aus und fragt neu).
+- **Stabile Signatur:** Sind die Signier-Secrets gesetzt (siehe unten), signiert die CI mit dem selbstsignierten
+  Zertifikat „TouchBridge Self-Signed (groovex)“ und fester Designated Requirement
+  `identifier "com.groovex.touchbridge" and certificate leaf = H"<sha1>"` (CLI: `com.groovex.touchbridge.cli`).
+  macOS erkennt neue Versionen dadurch als dieselbe App – die Rechte bleiben über Updates erhalten. Der In-App-Updater
+  installiert dann nur Bundles mit demselben Leaf-Zertifikat. Ohne Secrets wird ad-hoc signiert (Designated Requirement
+  = cdhash, ändert sich mit jedem Build → Rechte nach jedem Update neu erteilen).
+- **Nach einem Update auf einen ad-hoc-Build bzw. beim Umstieg auf den ersten signierten Build (einmalig):**
+  `tccutil reset ListenEvent com.groovex.touchbridge; tccutil reset Accessibility com.groovex.touchbridge`, dann
+  TouchBridge starten und beide Rechte erlauben – oder in Systemeinstellungen › Datenschutz & Sicherheit ›
+  **Eingabeüberwachung** / **Bedienungshilfen** TouchBridge mit „–“ entfernen und neu hinzufügen. Dasselbe macht
+  Menü › Berechtigungen › **Berechtigungen zurücksetzen …**.
 - **Wirkung statt Schalter:** Der Status richtet sich nach dem tatsächlichen Ergebnis – kommen Reports an, gilt die
   Berechtigung als wirksam; ist sie laut System erteilt, das Öffnen scheitert aber mit `kIOReturnNotPermitted`, meldet das
   Menü „Eintrag veraltet – in Systemeinstellungen entfernen (–) und neu hinzufügen“.
+
+### Signier-Zertifikat einrichten (einmalig, auf dem eigenen Mac)
+`scripts/setup-signing.sh` erzeugt lokal das selbstsignierte Zertifikat (RSA 2048, EKU codeSigning, 10 Jahre),
+packt es mit Zufallspasswort als .p12 und speichert es per GitHub CLI als Actions-Secrets `TB_SIGN_P12` (base64) und
+`TB_SIGN_P12_PASSWORD`; danach löscht es alle lokalen Schlüsseldateien und gibt den Leaf-SHA1 aus. Voraussetzung:
+`brew install gh && gh auth login`. Der private Schlüssel verlässt den Mac nur in Richtung GitHub-Secrets.
 
 ### Exklusiver Zugriff und Systemzeiger
 Der Anmite meldet sich mit **drei HID-Schnittstellen** (Touch-Digitizer, Maus/Pointer, Vendor). Über die Maus-Schnittstelle

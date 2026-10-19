@@ -439,6 +439,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(submenu("Ausrichtung", orientationMenu()))
         menu.addItem(submenu("Scrollen", scrollMenu()))
         menu.addItem(toggle("1-Finger-Ziehen scrollt (statt Zeiger/Ziehen)", settings.oneFingerScroll, #selector(toggleOneFingerScroll)))
+        menu.addItem(toggle("Pinch = Trackpad-Zoom (aus: Cmd + / Cmd −)", settings.nativeZoom, #selector(toggleNativeZoom)))
         menu.addItem(toggle("Exklusiv übernehmen (empfohlen)", settings.seize, #selector(toggleSeize)))
         let touchOnly = toggle("Exklusiv nur Touch-Schnittstelle (Test: Maus/Vendor nicht exklusiv)", settings.seizeTouchOnly,
                                #selector(toggleSeizeTouchOnly))
@@ -610,6 +611,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleSeize() { settings.seize.toggle() }
     @objc private func toggleSeizeTouchOnly() { settings.seizeTouchOnly.toggle() }
     @objc private func toggleOneFingerScroll() { settings.oneFingerScroll.toggle() }
+    @objc private func toggleNativeZoom() { settings.nativeZoom.toggle() }
     @objc private func toggleSuppress() { settings.suppressSystemPointer.toggle() }
     @objc private func toggleFlipX() { settings.flipX.toggle() }
     @objc private func toggleFlipY() { settings.flipY.toggle() }

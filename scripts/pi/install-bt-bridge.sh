@@ -46,6 +46,17 @@ else
   sed -i '/^\[General\]/a Name = Anmite Touch (TouchBridge)' /etc/bluetooth/main.conf
 fi
 
+echo "== USB-Stabilität (Pi Zero / Pi 1) =="
+REBOOT=0
+CMD=/boot/firmware/cmdline.txt; [ -f "$CMD" ] || CMD=/boot/cmdline.txt
+if [ -d /sys/module/dwc_otg ] && ! grep -q "dwc_otg.speed=1" "$CMD"; then
+  # Der Anmite-Touch ist ein Full-Speed-Gerät; hinter einem Hub verschluckt sich dwc_otg sonst gelegentlich (Hub-Reset)
+  cp "$CMD" "$CMD.bak"
+  sed -i '1 s/$/ dwc_otg.speed=1/' "$CMD"
+  REBOOT=1
+  echo "dwc_otg.speed=1 gesetzt (wirkt nach Neustart)"
+fi
+
 echo "== Dienst =="
 cat > "$UNIT" <<UNITEOF
 [Unit]
@@ -69,5 +80,6 @@ systemctl restart touchbridge-bt
 sleep 3
 journalctl -u touchbridge-bt -n 15 --no-pager
 echo
-echo "Fertig. Am Mac: Systemeinstellungen › Bluetooth › „Anmite Touch (TouchBridge)“ › Verbinden."
+echo "Done. On your Mac: System Settings › Bluetooth › \"Anmite Touch (TouchBridge)\" › Connect."
 echo "Log live:  journalctl -u touchbridge-bt -f"
+if [ "$REBOOT" = 1 ]; then echo; echo ">>> Bitte einmal neu starten: sudo reboot"; fi

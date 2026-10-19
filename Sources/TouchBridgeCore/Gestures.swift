@@ -13,9 +13,12 @@ public protocol EventSink: AnyObject {
     func click(_ p: CGPoint, right: Bool, clicks: Int64)
     func scroll(dx: Int32, dy: Int32, phase: Int64)
     func key(_ code: CGKeyCode, flags: CGEventFlags)
+    /// Trackpad-Zoomgeste (Magnify); phase 1 = Beginn, 2 = Änderung, 4 = Ende
+    func magnify(_ amount: Double, phase: Int64)
 }
 
 public extension EventSink {
+    func magnify(_ amount: Double, phase: Int64) {}
     func mouse(_ type: CGEventType, _ p: CGPoint, _ button: CGMouseButton) { mouse(type, p, button, clicks: 1) }
     func click(_ p: CGPoint, right: Bool = false) { click(p, right: right, clicks: 1) }
 }
@@ -64,6 +67,18 @@ public final class EventPoster: EventSink {
             mark(e)
             e.post(tap: .cghidEventTap)
         }
+    }
+
+    /// Wie ein echtes Trackpad: Gesture-Event (CGS-Typ 29) mit HID-Typ Zoom (8), Phase (Feld 132) und Betrag (Feld 113).
+    /// Undokumentiert, aber seit Jahren stabil (u. a. Mac Mouse Fix, WebKit-Test-SPI).
+    public func magnify(_ amount: Double, phase: Int64) {
+        guard let e = CGEvent(source: src) else { return }
+        e.type = CGEventType(rawValue: 29) ?? .null
+        e.setIntegerValueField(CGEventField(rawValue: 110)!, value: 8)
+        e.setIntegerValueField(CGEventField(rawValue: 132)!, value: phase)
+        e.setDoubleValueField(CGEventField(rawValue: 113)!, value: amount)
+        mark(e)
+        e.post(tap: .cghidEventTap)
     }
 }
 
@@ -126,6 +141,8 @@ public struct GestureConfig {
     public var scrollGain: CGFloat = 1.0
     /// 1-Finger-Ziehen scrollt statt zu ziehen (Zeiger/Drag)
     public var oneFingerScroll = false
+    /// Pinch als echte Trackpad-Zoomgeste (stufenlos, auch Karten/Fotos); aus = Cmd + / Cmd −
+    public var nativeZoom = true
 }
 
 public final class GestureEngine {
@@ -192,6 +209,7 @@ public final class GestureEngine {
         if maxFingers == 2 {
             guard n == 2 else {
                 if mode == .scrolling { poster.scroll(dx: 0, dy: 0, phase: 4); mode = .done }
+                if mode == .pinching { if cfg.nativeZoom { poster.magnify(0, phase: 4) }; mode = .done }
                 return
             }
             let c = centroid(touches)
@@ -200,7 +218,12 @@ public final class GestureEngine {
             case .scrolling:
                 scrollTo(c)
             case .pinching:
-                if pinchRef > 0 {
+                if cfg.nativeZoom {
+                    if pinchRef > 0 && d > 0 {
+                        let m = Double(d / pinchRef - 1)
+                        if abs(m) > 0.002 { poster.magnify(m, phase: 2); pinchRef = d }
+                    }
+                } else if pinchRef > 0 {
                     let r = d / pinchRef
                     if r > 1.18 { poster.key(Key.zoomIn, flags: .maskCommand); pinchRef = d }
                     else if r < 0.85 { poster.key(Key.zoomOut, flags: .maskCommand); pinchRef = d }
@@ -210,6 +233,7 @@ public final class GestureEngine {
                 let spread = abs(d - d0), move = hypot(c.x - c0.x, c.y - c0.y)
                 if spread > cfg.pinchThreshold || (spread > cfg.pinchThreshold * 0.5 && spread > move) {
                     mode = .pinching; pinchRef = d
+                    if cfg.nativeZoom { poster.move(c); poster.magnify(0, phase: 1) }
                 } else if move > cfg.scrollThreshold && spread < move * 0.6 {
                     mode = .scrolling; lastC = c; remX = 0; remY = 0
                     poster.scroll(dx: 0, dy: 0, phase: 1)
@@ -282,6 +306,8 @@ public final class GestureEngine {
             if now - startTime < 0.35 { poster.click(c0, right: true) } // Zwei-Finger-Tap
         case .scrolling:
             poster.scroll(dx: 0, dy: 0, phase: 4)
+        case .pinching:
+            if cfg.nativeZoom { poster.magnify(0, phase: 4) }
         default: break
         }
         mode = .idle

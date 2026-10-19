@@ -25,6 +25,7 @@ final class RecordingSink: EventSink {
         let mod = flags.contains(.maskControl) ? "ctrl+" : (flags.contains(.maskCommand) ? "cmd+" : "")
         events.append("key \(mod)\(code)")
     }
+    func magnify(_ amount: Double, phase: Int64) { events.append(String(format: "mag %.2f p%lld", amount, phase)) }
 }
 
 final class GestureTests: XCTestCase {
@@ -105,6 +106,9 @@ final class GestureTests: XCTestCase {
     }
 
     func testPinchZoomIn() {
+        var cfg = GestureConfig(); cfg.nativeZoom = false
+        engine = GestureEngine(poster: sink, config: cfg)
+        engine.clock = { [unowned self] in self.now }
         frame([(140, 100), (160, 100)])
         frame([(100, 100), (200, 100)])   // Abstand 20 -> 100: Pinch erkannt
         frame([(50, 100), (250, 100)])    // 100 -> 200: Cmd +
@@ -112,6 +116,9 @@ final class GestureTests: XCTestCase {
     }
 
     func testAsymmetricPinchIsNotScroll() {
+        var cfg = GestureConfig(); cfg.nativeZoom = false
+        engine = GestureEngine(poster: sink, config: cfg)
+        engine.clock = { [unowned self] in self.now }
         // ein Finger bleibt stehen, der andere wandert nach außen: Mittelpunkt bewegt sich, trotzdem Pinch
         frame([(100, 100), (200, 100)])
         frame([(100, 100), (230, 100)])
@@ -122,10 +129,23 @@ final class GestureTests: XCTestCase {
     }
 
     func testPinchZoomOut() {
+        var cfg = GestureConfig(); cfg.nativeZoom = false
+        engine = GestureEngine(poster: sink, config: cfg)
+        engine.clock = { [unowned self] in self.now }
         frame([(50, 100), (250, 100)])
         frame([(90, 100), (210, 100)])
         frame([(120, 100), (180, 100)])
         XCTAssertEqual(sink.events.last, "key cmd+\(Key.zoomOut)")
+    }
+
+    func testNativePinchSendsMagnifyPhases() {
+        frame([(100, 100), (200, 100)])
+        frame([(60, 100), (240, 100)])    // 100 -> 180: Pinch erkannt, Beginn
+        frame([(30, 100), (300, 100)])    // 180 -> 270: +0.50
+        frame([])
+        let mags = sink.events.filter { $0.hasPrefix("mag") }
+        XCTAssertEqual(mags, ["mag 0.00 p1", "mag 0.50 p2", "mag 0.00 p4"])
+        XCTAssertFalse(sink.events.contains { $0.hasPrefix("key") })
     }
 
     func testThreeFingerSwipeLeftSwitchesSpace() {

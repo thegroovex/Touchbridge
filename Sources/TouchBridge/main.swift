@@ -78,6 +78,7 @@ while !args.isEmpty {
     case "--no-suppress": settings.suppressSystemPointer = false
     case "--seize-touch-only": settings.seizeTouchOnly = true
     case "--one-finger-scroll": settings.oneFingerScroll = true
+    case "--key-zoom": settings.nativeZoom = false
     case "--rotate": settings.rotation = Int(next()) ?? 0
     case "--swap-xy": settings.swapXY = true
     case "--flip-x": settings.flipX = true

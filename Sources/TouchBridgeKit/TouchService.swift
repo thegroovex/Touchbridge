@@ -39,6 +39,8 @@ public struct TouchSettings: Codable, Equatable {
     public var seizeTouchOnly = false
     /// 1-Finger-Ziehen scrollt (statt Zeiger ziehen/Drag)
     public var oneFingerScroll = false
+    /// Pinch als echte Trackpad-Zoomgeste (sonst Cmd + / Cmd −)
+    public var nativeZoom = true
     /// Erfolgreiche Multitouch-Sequenz aus den Experimenten (MultitouchSequence.rawValue) – beim Verbinden anwenden
     public var mtSequence: String? = nil
     public init() {}
@@ -46,7 +48,7 @@ public struct TouchSettings: Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case enabled, displayID, rotation, flipX, flipY, swapXY, invertScroll, scrollGain, seize, vid, pid
         case mode, midiLayout, mpe, midiChannel, baseNote, scale, bendRange, showOverlay, suppressSystemPointer
-        case seizeTouchOnly, oneFingerScroll, mtSequence
+        case seizeTouchOnly, oneFingerScroll, mtSequence, nativeZoom
     }
 
     /// Fehlende Schlüssel (ältere gespeicherte Einstellungen) fallen auf die Standardwerte zurück.
@@ -76,6 +78,7 @@ public struct TouchSettings: Codable, Equatable {
         suppressSystemPointer = v(.suppressSystemPointer, d.suppressSystemPointer)
         seizeTouchOnly = v(.seizeTouchOnly, d.seizeTouchOnly)
         oneFingerScroll = v(.oneFingerScroll, d.oneFingerScroll)
+        nativeZoom = v(.nativeZoom, d.nativeZoom)
         mtSequence = (try? c.decodeIfPresent(String.self, forKey: .mtSequence)) ?? nil
     }
     public var multitouchSequence: MultitouchSequence? { mtSequence.flatMap(MultitouchSequence.init(rawValue:)) }
@@ -86,6 +89,7 @@ public struct TouchSettings: Codable, Equatable {
         g.invertScroll = invertScroll
         g.scrollGain = CGFloat(scrollGain)
         g.oneFingerScroll = oneFingerScroll
+        g.nativeZoom = nativeZoom
         return g
     }
     public var midiConfig: MIDIConfig {

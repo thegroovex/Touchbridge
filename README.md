@@ -1,250 +1,196 @@
-# TouchBridge – Multitouch für den Anmite A140W05T am Mac
+# TouchBridge – use the Anmite touchscreen on your Mac
 
 [![CI](https://github.com/thegroovex/Touchbridge/actions/workflows/ci.yml/badge.svg)](https://github.com/thegroovex/Touchbridge/actions/workflows/ci.yml)
 
-macOS kennt keine Touchscreens. Der Monitor meldet sich über USB-C als
-Standard-HID-Multitouch-Digitizer (deshalb klappt es unter Android sofort).
-TouchBridge liest diese Touch-Daten direkt, übernimmt das Gerät exklusiv und
-übersetzt die Finger in macOS-Eingaben.
+macOS does not support touchscreens. TouchBridge is a small menu bar app that reads the touch data of the
+**Anmite A140W05T** portable monitor (14", USB-C) and turns your fingers into clicks, scrolling, zooming and
+gestures. It can also turn the screen into a **MIDI controller** for Ableton Live and other music apps.
 
-## Gesten
-| Geste | Wirkung |
-|---|---|
-| 1 Finger tippen | Klick (2× tippen = Doppelklick) |
-| 1 Finger ziehen | Ziehen / Markieren / Fenster verschieben |
-| 1 Finger halten (~0,65 s) | Rechtsklick |
-| 2 Finger tippen | Rechtsklick |
-| 2 Finger schieben | Scrollen (vertikal + horizontal, pixelgenau) |
-| 2 Finger spreizen/zusammen | Zoom (Cmd + / Cmd −) |
-| 3 Finger links/rechts | Space wechseln (Ctrl ←/→) |
-| 3 Finger hoch / runter | Mission Control / App-Exposé |
+There are two ways to use it:
 
-## MIDI-Modus (MIDI-Controller & MPE)
-Statt Maus & Gesten kann der Touch-Monitor als MIDI-Controller arbeiten. Menü › **Modus › MIDI**
-(oder `touchbridge --midi`). TouchBridge legt dann den virtuellen MIDI-Port **„TouchBridge“** an,
-sendet keine Maus-/Tastatur-Events mehr und übernimmt das Touch-Gerät exklusiv. Auf dem
-Touch-Bildschirm liegt ein durchsichtiges Overlay, das Fader, Pads, XY-Feld und Tasten zeigt
-(durchklickbar, abschaltbar unter **MIDI-Einstellungen › Layout auf dem Touch-Bildschirm anzeigen**).
-
-**Layouts** (Menü › MIDI-Einstellungen › Layout bzw. `--layout`):
-| Layout | Inhalt | MIDI |
+| | **Simple setup** | **Multitouch setup** |
 |---|---|---|
-| `mixer` | 8 Fader oben, 8 Pads unten | Fader CC 20–27, Pads ab Grundnote (Anschlag oben = laut) |
-| `keyboard` | 2 Tastenreihen (MPE-Keyboard), obere Reihe eine Oktave höher | Noten ab Grundnote, Skala wählbar |
-| `performance` | 4 Fader, XY-Feld, 8 Pads | Fader CC 20–23, XY = CC 16 (X) / CC 17 (Y), Pads ab Grundnote |
+| What you get | Single touch: tap, drag, hold for right-click | Real 10-finger multitouch: two-finger scroll, pinch zoom, 3-finger swipes, MIDI with many fingers |
+| What you need | Just the monitor and one USB-C cable | Monitor + a Raspberry Pi (e.g. Pi Zero W) + HDMI cable |
+| Setup time | 5 minutes | about 30 minutes, once |
 
-- Jeder Finger bleibt an der Zone, in der er aufgesetzt hat (bis 10 Finger gleichzeitig) –
-  ein Fader lässt sich also nicht versehentlich in den Nachbarfader „ziehen“.
-- Fader: unten 0, oben 127. Pads: Note On beim Aufsetzen, Note Off beim Abheben.
-- **MPE** (Standard an, nur für Keyboard-Zonen): Lower Zone, Master = Kanal 1, jede Note auf einem
-  eigenen Kanal 2–16. Seitliches Rutschen = Pitch Bend relativ zum Anschlagpunkt (±48 Halbtöne,
-  zwischen den Tastenmitten wird auf die Skalentöne interpoliert), Hoch/Runter in der Taste = CC 74
-  („Slide“/Timbre), Druck = Channel Pressure – sofern der Monitor Druck oder Kontaktgröße meldet.
-  Beim Start werden RPN 6 (MPE-Konfiguration, 15 Member-Kanäle) und RPN 0 (Bend-Bereich) gesendet.
-  Mit MPE gehen Fader, Pads und XY auf Kanal 1.
-- **Ohne MPE** (`--no-mpe`): alles auf dem gewählten MIDI-Kanal, kein Pitch Bend, Druck als Poly Aftertouch.
-- Werte werden nur bei Änderung gesendet, höchstens ~250× pro Sekunde und Kanal.
-- Ausrichtung (Menü › Touch › Ausrichtung) gilt auch hier: Das Layout liegt immer richtig herum auf dem Bild.
+Why the Pi? The monitor's firmware only sends multitouch data to Windows, Android and Linux. On a Mac it falls
+back to a simple "mouse" mode. The Pi runs Linux, receives the real multitouch data and forwards it to your Mac
+over Bluetooth. TouchBridge detects both setups automatically – you can switch between them at any time just by
+re-plugging cables.
 
-Kommandozeile: `touchbridge --midi --layout keyboard`, `touchbridge --midi --layout mixer --no-mpe --channel 10`,
-weitere Optionen `--base-note 36`, `--scale minor`, `--bend-range 24`.
+---
 
-### Ableton Live
-1. TouchBridge im MIDI-Modus starten.
-2. Live › Einstellungen › **Link, Tempo & MIDI**: beim Eingang **TouchBridge** „Spur“ (Track) und für
-   MIDI-Mapping „Fernsteuerung“ (Remote) einschalten.
-3. **Fader/XY**: Cmd+M (MIDI-Map-Modus), Parameter in Live anklicken, Fader auf dem Touch-Monitor bewegen, Cmd+M beenden.
-4. **Pads**: MIDI-Spur mit Drum Rack, Eingang „TouchBridge“, Monitor „In“ oder Spur scharf schalten.
-   Für Drum Racks die Grundnote auf C1 (36) stellen.
-5. **MPE (Live 11 und 12)**: Layout `keyboard`, MPE an. MIDI-Spur mit MPE-fähigem Instrument
-   (z. B. Drift, Meld, Wavetable, Sampler – im Gerätemenü „MPE aktivieren“). Eingang „TouchBridge“,
-   im Eingangsmenü der Spur **MPE** wählen. Pitch-Bend-Bereich des Instruments auf 48 Halbtöne
-   (Standard bei MPE). Live 11/12 zeichnet MPE-Daten pro Note auf und zeigt sie im Clip-Editor („Note Expression“).
+## 1. Install the app on your Mac
 
-### Ohpe
-- **Standalone**: Zahnrad › MIDI › Eingang „TouchBridge“ aktivieren.
-- **Als Plug-in** (VST3/AU in Live, Logic …): MIDI kommt über die Spur – Spureingang „TouchBridge“ wählen.
-- Fader, XY und Pads per **MIDI learn** (Zahnrad › MIDI learn) auf Parameter, Mixer oder Transport legen.
-- Zum Spielen der Klangerzeuger MPE ausschalten (Menü bzw. `--no-mpe`) und den MIDI-Kanal wählen,
-  auf dem der Part hört – ein MPE-Keyboard verteilt die Noten sonst auf die Kanäle 2–16.
+1. Download the latest `TouchBridge-<version>.dmg` from
+   [Releases](https://github.com/thegroovex/Touchbridge/releases) (works on Apple Silicon and Intel, macOS 12 or newer).
+2. Open the DMG and drag **TouchBridge** into **Applications**.
+3. First launch: right-click TouchBridge in Applications › **Open** › **Open**.
+   (The app is not notarized by Apple, so macOS asks once. Alternatively: System Settings › Privacy & Security ›
+   "Open Anyway".)
+4. macOS asks for two permissions – allow both:
+   - **Input Monitoring** (so TouchBridge can read the touchscreen)
+   - **Accessibility** (called **"Device control and data access"** on macOS 27) – so TouchBridge can click and scroll
 
-### livelooper
-- **Standalone**: in den Audio-/MIDI-Einstellungen „TouchBridge“ als MIDI-Eingang aktivieren;
-  **als Plug-in** kommt MIDI über den Spureingang der DAW.
-- **MIDI-Learn** einschalten, das Bedienelement (Record/Play/Overdub, Lautstärke, Loop-Länge …) anklicken und
-  Pad bzw. Fader auf dem Touch-Monitor berühren.
-- Passende Layouts: `mixer` (8 Fader = Spurlautstärken, 8 Pads = Loop-Tasten) oder `performance` (XY-Feld für Effekte),
-  jeweils mit `--no-mpe`.
+You now have the TouchBridge icon (a screen with three touch points) in your menu bar.
+TouchBridge updates itself: when a new version is out, a dot (•) appears next to the icon – open the menu and
+choose **Install now**.
 
-## Multitouch über die Pi-Brücke (Bluetooth)
+## 2a. Simple setup (single touch)
 
-Direkt per USB-C am Mac liefert die Anmite-Firmware nur **Single-Touch** (sie schaltet beim Mac in den Mausmodus).
-Unter Linux liefert derselbe Controller echtes **10-Finger-Multitouch**. Die Pi-Brücke nutzt das:
+Connect the monitor to your Mac with **one USB-C cable** (picture and touch over the same cable). That's it.
+The menu shows **Source: Single touch**.
 
-- **Bild:** HDMI vom Mac ans Anmite (ohne Bildsignal schaltet das Display nach 30 s ab – und damit auch der Touch).
-- **Touch:** USB-C des Anmite an einen Raspberry Pi (z. B. Pi Zero W über OTG-Adapter/Hub).
-- Der Pi meldet sich per Bluetooth als „Anmite Touch (TouchBridge)“ mit Descriptor und VID/PID des Anmite und
-  reicht die Multitouch-Reports unverändert weiter. TouchBridge erkennt ihn automatisch.
+## 2b. Multitouch setup with a Raspberry Pi
 
-Beide Wege funktionieren mit derselben App: USB direkt = Single-Touch, über den Pi = Multitouch. Einfach umstecken.
+### What you need
 
-Einrichtung auf dem Pi (Raspberry Pi OS Lite):
+- A **Raspberry Pi with Bluetooth**: Pi Zero W / Zero 2 W (cheap and tiny), or Pi 3 / 4 / 5
+- A **microSD card** (8 GB or more) and a way to write it from your Mac
+- A **power supply** for the Pi
+- A cable from the monitor's **USB-C** port to the Pi:
+  - Pi Zero: a **USB-C to micro-USB OTG** cable, or a small USB hub/OTG adapter + the monitor's USB-C cable
+    (use the Pi Zero's port labelled **USB**, not **PWR**)
+  - Pi 3/4/5: a normal USB-C to USB-A cable
+- An **HDMI cable** from your Mac to the monitor's HDMI port (with an adapter if your Mac has no HDMI)
+- Power for the monitor (its own power supply on its second USB-C port)
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/thegroovex/Touchbridge/main/scripts/pi/install-bt-bridge.sh | sudo bash
+### How it is wired
+
+```
+ Mac ── HDMI ─────────────────────► Anmite monitor   (picture)
+ Anmite USB-C (touch) ────────────► Raspberry Pi    (touch data)
+ Raspberry Pi ── Bluetooth ───────► Mac             (multitouch)
 ```
 
-Danach am Mac in den Bluetooth-Einstellungen „Anmite Touch (TouchBridge)“ verbinden. Log auf dem Pi:
-`journalctl -u touchbridge-bt -f`. Entfernen: `sudo bash install-bt-bridge.sh --uninstall`.
+Important: the monitor switches itself off after about 30 seconds when it gets **no picture** ("NO SIGNAL") –
+and the touch goes off with it. So always connect HDMI from the Mac first.
 
-## Berechtigungen
-TouchBridge braucht **Eingabeüberwachung** (sonst liefert macOS keine Touch-Reports) und für Maus & Gesten
-**Gerätesteuerung und Datenzugriff** (so heißt die Seite ab macOS 27; älteres macOS: **Bedienungshilfen**) –
-Events senden, Systemzeiger-Filter. Beide Dialoge kommen nur **einmal** automatisch;
-danach zeigt das Menü nur noch einen Hinweis.
+### Step 1 – Prepare the SD card
 
-- **Stabile Signatur:** Sind die Signier-Secrets gesetzt (siehe unten), signiert die CI mit dem selbstsignierten
-  Zertifikat „TouchBridge Self-Signed (groovex)“ und fester Designated Requirement
-  `identifier "com.groovex.touchbridge" and certificate leaf = H"<sha1>"` (CLI: `com.groovex.touchbridge.cli`).
-  macOS erkennt neue Versionen dadurch als dieselbe App – die Rechte bleiben über Updates erhalten. Der In-App-Updater
-  installiert dann nur Bundles mit demselben Leaf-Zertifikat. Ohne Secrets wird ad-hoc signiert (Designated Requirement
-  = cdhash, ändert sich mit jedem Build → Rechte nach jedem Update neu erteilen).
-- **Nach einem Update auf einen ad-hoc-Build bzw. beim Umstieg auf den ersten signierten Build (einmalig):**
-  `tccutil reset ListenEvent com.groovex.touchbridge; tccutil reset Accessibility com.groovex.touchbridge`, dann
-  TouchBridge starten und beide Rechte erlauben – oder in Systemeinstellungen › Datenschutz & Sicherheit ›
-  **Eingabeüberwachung** / **Gerätesteuerung und Datenzugriff** (Bedienungshilfen) TouchBridge mit „–“ entfernen und neu hinzufügen. Dasselbe macht
-  Menü › Berechtigungen › **Berechtigungen zurücksetzen …**.
-- **Wirkung statt Schalter:** Der Status richtet sich nach dem tatsächlichen Ergebnis – kommen Reports an, gilt die
-  Berechtigung als wirksam; ist sie laut System erteilt, das Öffnen scheitert aber mit `kIOReturnNotPermitted`, meldet das
-  Menü „Eintrag veraltet – in Systemeinstellungen entfernen (–) und neu hinzufügen“.
+1. Install **Raspberry Pi Imager** on your Mac: <https://www.raspberrypi.com/software/>
+2. Open it and choose:
+   - **Device:** your Pi model
+   - **Operating system:** *Raspberry Pi OS (other)* › **Raspberry Pi OS Lite** (32-bit for Pi Zero W, 64-bit for others)
+   - **Storage:** your SD card
+3. Click **Next** › **Edit settings** and set:
+   - hostname: `anmite-pi`
+   - a username and password (remember them)
+   - your Wi-Fi name and password, and your country
+   - on the **Services** tab: turn on **SSH** with password authentication
+4. Write the card, put it into the Pi and power the Pi on. Wait 2–3 minutes for the first boot.
 
-### Signier-Zertifikat einrichten (einmalig, auf dem eigenen Mac)
-`scripts/setup-signing.sh` erzeugt lokal das selbstsignierte Zertifikat (RSA 2048, EKU codeSigning, 10 Jahre),
-packt es mit Zufallspasswort als .p12 und speichert es per GitHub CLI als Actions-Secrets `TB_SIGN_P12` (base64) und
-`TB_SIGN_P12_PASSWORD`; danach löscht es alle lokalen Schlüsseldateien und gibt den Leaf-SHA1 aus. Voraussetzung:
-`brew install gh && gh auth login`. Der private Schlüssel verlässt den Mac nur in Richtung GitHub-Secrets.
+Wi-Fi is only needed for this setup. Afterwards the bridge works anywhere, over Bluetooth only.
 
-### Exklusiver Zugriff und Systemzeiger
-Der Anmite meldet sich mit **drei HID-Schnittstellen** (Touch-Digitizer, Maus/Pointer, Vendor). Über die Maus-Schnittstelle
-bewegt macOS selbst den Zeiger (AppleUserHIDEventDriver → WindowServer). TouchBridge öffnet deshalb **alle** Schnittstellen
-des Monitors genau einmal (dedupliziert per IORegistryEntryID) und **exklusiv**; das Menü zeigt den Stand je Schnittstelle,
-z. B. „3 Schnittstellen: Touch exklusiv, Maus exklusiv, Vendor exklusiv“, dazu, welche Schnittstelle tatsächlich
-Daten liefert („Reports: Touch: 0 Reports, Maus: 120 Reports, Vendor: 0 Reports“) und die Quelle.
+### Step 2 – Install the bridge on the Pi
 
-### Multitouch oder Single-Touch (Gerät im Mausmodus)
-Jede Schnittstelle, deren Report-Descriptor Finger beschreibt, ist Multitouch-Quelle. Eine Schnittstelle mit
-**absoluten** X/Y (ohne Relative-Flag) und Button 1 bzw. Tip Switch – z. B. die Maus-Schnittstelle des Anmite
-(Report 7: 3 Buttons, X 0…16383, Y 0…9599, Rad) – dient als **Single-Touch-Fallback**: Button 1 = Berührung,
-Koordinaten absolut auf den Touch-Bildschirm. Tippen = Klick, Ziehen = Drag, Halten = Rechtsklick; mit
-„1-Finger-Ziehen scrollt“ (Terminal: `--one-finger-scroll`) wird aus dem Ziehen Scrollen.
+1. On your Mac, open **Terminal** and log in to the Pi (use your username):
+   ```bash
+   ssh yourname@anmite-pi.local
+   ```
+   Type `yes` when asked about the fingerprint, then your password.
+2. Copy and paste this one line and press Enter:
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/thegroovex/Touchbridge/main/scripts/pi/install-bt-bridge.sh | sudo bash
+   ```
+   It installs everything and starts the bridge automatically on every boot.
+3. If the installer says **"Bitte einmal neu starten"** (please reboot), run `sudo reboot` and log in again after a minute.
 
-Der Anmite sendet am Mac zunächst nur auf der Maus-Schnittstelle (wie Windows vor dem Input-Mode-Wechsel). Beim Öffnen
-versucht TouchBridge automatisch, Multitouch einzuschalten, und prüft nach jedem Versuch während einer Berührung 2 s
-lang, ob Multitouch-Reports kommen: (1) GetReport „Contact Count Maximum“, dann SetReport Input Mode 2 `[21 02 00]`
-(Reihenfolge wie Linux hid-multitouch), (2) dieselben Daten ohne Report-ID `[02 00]`, (3) Input Mode 3 `[21 03 00]`.
-Klappt ein Versuch, läuft der Multitouch-Pfad und die Maus-Schnittstelle wird nur noch exklusiv gehalten und verworfen;
-sonst bleibt es bei Single-Touch und das Menü zeigt „Single-Touch (Gerät im Mausmodus)“. Alle Versuche stehen mit
-Return-Codes und Feature-Inhalten in der Diagnose.
+### Step 3 – Connect everything
 
-**Multitouch-Experimente** (Menü › „Multitouch-Experimente starten …“, Terminal `touchbridge --mt-probe`
-[`--skip-reenumerate`]): fünf Wege nacheinander, nach jedem 3 s Warten auf Report 13 (dabei mit 2 Fingern tippen):
-a) GetReport Input 13/7 (Linux-Init), b) Feature 0x0A/0x21 lesen + Input Mode 2 über IOHID, c) die Linux-Sequenz
-(SET_IDLE(0) je Interface, GET_REPORT 0x0A, GET/SET_REPORT 0x21) als direkte USB-Control-Requests (IOUSBLib, ohne
-Entitlement), c') dieselbe über den Interface-Client, d) USB-Neu-Enumeration und sofort danach die Linux-Sequenz.
-Der Vendor-Kanal (0xFF0A) wird nur gelesen. Die erfolgreiche Sequenz wird gespeichert und beim Verbinden automatisch
-angewendet (Terminal: `--mt-sequence NAME`). Das Protokoll landet in der Zwischenablage und als
-„TouchBridge-MT-Experimente.txt“ auf dem Schreibtisch.
+1. Connect **HDMI** from the Mac to the monitor and make sure you see a picture.
+2. Plug the monitor's **USB-C** (touch) into the Pi.
+3. On your Mac: **System Settings › Bluetooth**, find **"Anmite Touch (TouchBridge)"** and click **Connect**.
+4. Start TouchBridge. The menu should show **Anmite Touch (TouchBridge)** and **Source: Multitouch**.
+   Try scrolling with two fingers.
 
-Touch-Ziel ist immer der Anmite (Bildschirmname „ANMITE“/„A140W05T“), auch gegen eine gespeicherte Bildschirmwahl;
-der integrierte Bildschirm wird nie automatisch Touch-Ziel.
+From now on: power on the Pi, connect HDMI – the Pi reconnects to your Mac by itself.
 
-**Exklusiv nur Touch-Schnittstelle** (Menü, Terminal `--seize-touch-only`) ist eine Testoption: nur der Digitizer wird
-exklusiv übernommen, Maus/Vendor nicht.
+### Updating the Pi
 
-Lässt sich eine Schnittstelle nicht exklusiv übernehmen, nennt das Menü den Return-Code (hex) und – nur wenn wirklich
-vorhanden – einen zweiten TouchBridge-Prozess oder den alten LaunchAgent aus v0.1 (Menüpunkt „Alten LaunchAgent entfernen“).
-Dann greift **„Systemzeiger vom Touch unterdrücken (wenn nicht exklusiv)“**: ein Event-Tap verwirft die macOS-eigenen
-Maus-, Klick- und Scroll-Events dieses Geräts (Erkennung über die Absender-Registry-ID des HID-Events, sonst über
-`kCGEventSourceUnixProcessID == 0` + zeitliche Nähe zu Touch-Reports; TouchBridge markiert die eigenen Events), und
-TouchBridge setzt den Zeiger bei jedem Report absolut auf den Touch-Bildschirm. Im Terminal: `--no-suppress`.
+Run the same install line again (step 2.2). It updates the bridge and keeps your pairing.
+To remove it: `curl -fsSL https://raw.githubusercontent.com/thegroovex/Touchbridge/main/scripts/pi/install-bt-bridge.sh | sudo bash -s -- --uninstall`
 
-## Updates
-TouchBridge sucht beim Start und danach alle 24 Stunden auf GitHub nach einer neueren Version
-(Menü › **Updates**: „Nach Updates suchen …“, „Automatisch prüfen“, „Vorabversionen einbeziehen“ –
-Letzteres ist an, solange alle Versionen Previews sind). Gibt es ein Update, erscheint ein Punkt (•)
-neben dem Symbol in der Menüleiste und oben im Menü „Update auf … verfügbar“.
+---
 
-„Jetzt installieren“ lädt `TouchBridge-<version>.dmg` und `SHA256SUMS.txt` aus dem Release, prüft die
-SHA-256-Prüfsumme, öffnet das DMG schreibgeschützt, prüft Bundle-ID, Version und Code-Signatur,
-entfernt das Quarantäne-Attribut (die App ist nicht notarisiert), gibt den Touch-Monitor frei, ersetzt
-die App (bei fehlenden Schreibrechten nach Rückfrage mit Administrator-Passwort) und startet sie neu.
-„Diese Version überspringen“ blendet genau diese Version aus.
+## Gestures
 
-Im Terminal: `touchbridge --check-update`.
+| Gesture | Action |
+|---|---|
+| Tap with 1 finger | Click (tap twice = double-click) |
+| Drag with 1 finger | Drag / select / move windows |
+| Hold 1 finger (~0.65 s) | Right-click |
+| Tap with 2 fingers | Right-click * |
+| Slide 2 fingers | Scroll (vertical and horizontal) * |
+| Pinch / spread 2 fingers | Zoom, like on a trackpad (Maps, Photos, Safari, Preview …) * |
+| Swipe 3 fingers left / right | Switch desktop (Space) * |
+| Swipe 3 fingers up / down | Mission Control / App Exposé * |
 
-## Diagnose
-Menü › **Diagnose aufzeichnen** (oder `touchbridge --diagnose`): Der Touch-Dienst läuft weiter, sendet während der
-Messung aber keine Events; Schnittstellen, die er schon hält, beobachtet die Diagnose nur mit (kein zweites Öffnen,
-keine zweite Callback-Registrierung). Alle übrigen HID-Interfaces des Monitors werden **nicht exklusiv** geöffnet und aufgelistet (Usage-Paare, Report-Größen,
-Transport, Location-ID), der Input Mode auf Multi-Touch gesetzt (Feature-Report vorher/nachher) und 10 s lang
-Rohreports und HID-Werte protokolliert – mit allen Return-Codes und den Details der DDC-Probe. Kommen keine
-Reports an, steht das ausdrücklich im Ergebnis.
-Zusätzlich: Code-Signatur der laufenden App (`codesign -dr-`, Leaf-Zertifikat), IOHIDCheckAccess/AXIsProcessTrusted,
-andere laufende TouchBridge-Prozesse, alter LaunchAgent, Zustand je Schnittstelle, Event-Tap-Statistik und die
-Halter jeder HID-Schnittstelle laut `ioreg` (Prozess-Clients mit PID, Kernel-/DriverKit-Treiber, DeviceUsagePairs,
-Built-In). Hält TouchBridge selbst ein Interface doppelt, steht das als Fehler im Ergebnis.
+\* needs the multitouch setup.
 
-## Installieren
-1. Unter **Releases** `TouchBridge-<version>.dmg` laden (Apple Silicon und Intel, ab macOS 12).
-2. DMG öffnen, **TouchBridge** auf „Programme“ ziehen.
-3. Erster Start: Rechtsklick auf TouchBridge › **Öffnen** (die App ist nicht von Apple notarisiert),
-   alternativ Systemeinstellungen › Datenschutz & Sicherheit › „Trotzdem öffnen“.
-4. **Gerätesteuerung und Datenzugriff** (älteres macOS: **Bedienungshilfen**) und **Eingabeüberwachung** für TouchBridge erlauben.
+Menu options: **1-finger drag scrolls** (instead of dragging), **Pinch = trackpad zoom** (off: sends Cmd + / Cmd −
+instead), scroll direction and speed, screen orientation (Touch › Orientation).
 
-Danach sitzt das TouchBridge-Symbol (Bildschirm mit drei Berührungspunkten) in der Menüleiste.
+## MIDI mode
 
-## Menüleiste
-- **Touch aktiv** an/aus, Status des erkannten Touch-Monitors
-- **Modus**: Maus & Gesten oder MIDI; **MIDI-Einstellungen**: Layout, MPE, MIDI-Kanal, Grundnote, Skala,
-  Pitch-Bend-Bereich, Overlay an/aus
-- **Bild**: Helligkeit, Kontrast, Lautstärke per DDC/CI (Apple-Silicon-Macs, wenn der Monitor DDC kann),
-  dazu Software-Abdunkeln für jeden Bildschirm
-- **Touch**: Ziel-Bildschirm, Ausrichtung (0/90/180/270°, spiegeln), Scrollrichtung und -tempo, 1-Finger-Ziehen scrollt,
-  exklusiver Modus, „Exklusiv nur Touch-Schnittstelle“ (Test)
-- **Beim Anmelden starten** (ab macOS 13), Berechtigungen prüfen
-- **Diagnose aufzeichnen**: 10 s Touch-Rohdaten, landen in der Zwischenablage und als
-  `TouchBridge-Diagnose.txt` auf dem Schreibtisch
-- **Kommandozeilen-Tool installieren**: verlinkt `touchbridge` nach `/usr/local/bin`
+Menu › **Mode › MIDI** turns the screen into a MIDI controller. TouchBridge creates a virtual MIDI port
+called **"TouchBridge"** and shows a see-through overlay with faders, pads, an XY field or keys on the touchscreen.
 
-## Kommandozeile
-`touchbridge --list-displays`, `touchbridge --dump`, `touchbridge --rotate 90`,
-`touchbridge --brightness 60`, `touchbridge --get volume` – alle Optionen: `touchbridge --help`.
+| Layout | Contents | MIDI |
+|---|---|---|
+| `mixer` | 8 faders on top, 8 pads below | faders CC 20–27, pads from the base note |
+| `keyboard` | 2 rows of keys (MPE keyboard) | notes from the base note, selectable scale |
+| `performance` | 4 faders, XY field, 8 pads | faders CC 20–23, XY = CC 16 / CC 17, pads |
 
-## Selbst bauen
-Voraussetzung: Xcode Command Line Tools (`xcode-select --install`).
+- Every finger stays in the zone where it touched down (up to 10 fingers at once).
+- **MPE** (on by default, keyboard layout): every note on its own channel; slide sideways = pitch bend,
+  up/down within a key = CC 74.
+- Settings in Menu › **MIDI settings**: layout, MPE, channel, base note, scale, pitch bend range, overlay.
+
+**Ableton Live:** Settings › Link, Tempo & MIDI › enable **Track** and **Remote** for input "TouchBridge".
+Map faders with Cmd+M. For MPE (Live 11/12) use the keyboard layout with an MPE-capable instrument
+(Drift, Meld, Wavetable …) and set the track input to "TouchBridge" › MPE.
+
+**Ohpe / livelooper:** enable "TouchBridge" as MIDI input (standalone) or as the track input (plug-in) and use
+MIDI learn. Turn MPE off (`--no-mpe`) when you want everything on one channel.
+
+## Monitor controls
+
+Menu › **Picture**: brightness, contrast and volume of the monitor via DDC (Apple Silicon), plus extra software dimming.
+
+## Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| Menu says nothing is connected | Check the cable, then Menu › Permissions – both permissions must be allowed. After an update you may need to remove TouchBridge from both permission lists with "–" and add it again (or Menu › Permissions › Reset permissions). |
+| Touch lands on the wrong screen or rotated | Menu › Touch › Screen / Orientation |
+| Multitouch: nothing happens | Is there a picture on the monitor? Is "Anmite Touch (TouchBridge)" connected in Bluetooth settings? On the Pi run `journalctl -u touchbridge-bt -f` – you should see "Lese Touch-Reports" and one line per touch. |
+| Multitouch stops for a while, then works again | Usually USB trouble between monitor and Pi. Run the installer again (it sets a USB stability fix) and reboot the Pi, or connect the monitor to the Pi without a hub. |
+| `ssh: Could not resolve hostname anmite-pi.local` | Wait a bit longer after the first boot, check the Wi-Fi settings in Raspberry Pi Imager, or use the Pi's IP address from your router. |
+| Bluetooth device does not appear on the Mac | On the Pi: `sudo systemctl restart bluetooth touchbridge-bt`, then look again. To pair from scratch, remove the device on the Mac first. |
+
+For a detailed report: Menu › **Record diagnostics** (touch the screen for 10 s). The result is copied to the
+clipboard and saved as `TouchBridge-Diagnose.txt` on your desktop – attach it to an
+[issue](https://github.com/thegroovex/Touchbridge/issues).
+
+## Command line
+
+Menu › **Install command line tool** links `touchbridge` to `/usr/local/bin`. Examples:
+`touchbridge --list-displays`, `touchbridge --dump`, `touchbridge --rotate 90`, `touchbridge --brightness 60`,
+`touchbridge --midi --layout keyboard`. All options: `touchbridge --help`.
+
+## Build it yourself
+
+Requires the Xcode Command Line Tools (`xcode-select --install`).
 
 ```bash
 swift build -c release
-swift test                       # Unit-Tests (Descriptor-Parser, Frames, Gesten, MIDI/MPE)
-scripts/package.sh dev           # TouchBridge.app als DMG nach dist/
+swift test                       # unit tests (descriptor parser, frames, gestures, MIDI/MPE)
+scripts/package.sh dev           # builds TouchBridge.app as a DMG in dist/
 ```
 
-App-Icon (Entwurf „Multitouch“, Liquid Glass) und Menüleisten-Glyph werden mit
-`python3 scripts/icon/make_icon.py` (pip: `cairosvg pillow`) nach `Resources/` erzeugt und sind eingecheckt.
+Technical background (permissions and code signing, exclusive device access, single/multitouch detection,
+experiments, diagnostics, code layout): [docs/technical-notes.de.md](docs/technical-notes.de.md) (German).
 
-## Aufbau
-- `Sources/TouchBridgeCore` – HID-Descriptor-Parser, Frame-Zusammenbau (inkl. Hybrid-Modus), Gesten-Engine, Mapping, DDC-Pakete,
-  `MIDI/` (Layouts, Finger-Tracker, MPE-Kanalvergabe, MIDI-Engine – plattformneutral, voll getestet)
-- `Sources/TouchBridgeKit` – IOKit-HID-Dienst, Bildschirme, Bildsteuerung (DDC über IOAVService / Gamma), CoreMIDI-Port, Rechte
-- `Sources/TouchBridgeApp` – Menüleisten-App
-- `Sources/TouchBridge` – Kommandozeilen-Tool
-- `Tests/TouchBridgeCoreTests` – XCTest mit typischen Touchscreen-Descriptoren und Gesten-Szenarien
-- `.github/workflows/ci.yml` – CI: universal Build + Tests (Apple Silicon + Intel), Paket als Artefakt, Release-Upload
-
-## Erster Test
-1. Monitor per USB-C anschließen (Bild + Touch über dasselbe Kabel), TouchBridge starten.
-2. Menü › **Diagnose aufzeichnen** und 10 s den Bildschirm berühren – die Datei hilft beim Anpassen.
-3. Landet der Touch gedreht oder gespiegelt: Menü › Touch › Ausrichtung.
-
-Klappt der exklusive Zugriff nicht, bewegt macOS den Cursor zusätzlich selbst; dann im Terminal
-`sudo touchbridge` als Gegenprobe starten und mir die Diagnose schicken.
+Note: the app's menus and the Pi log messages are currently in German.

@@ -352,7 +352,6 @@ public enum TouchSource: Equatable {
         return multitouchInterfaces > 0 ? .multitouch : .none
     }
 }
-}
 
 /// Open-Zustand je IORegistryEntryID im ganzen Prozess. Verhindert doppelte IOHIDDeviceOpen-Aufrufe
 /// (zwei eigene Clients auf demselben Interface lassen jeden späteren Seize mit kIOReturnExclusiveAccess scheitern).

@@ -13,7 +13,7 @@ let package = Package(
         .target(
             name: "TouchBridgeCore",
             path: "Sources/TouchBridgeCore",
-            linkerSettings: [.linkedFramework("CoreGraphics")]
+            linkerSettings: [.linkedFramework("CoreGraphics"), .linkedFramework("Carbon")]
         ),
         // Direkte USB-Control-Requests (IOUSBLib, C) für die Multitouch-Experimente
         .target(

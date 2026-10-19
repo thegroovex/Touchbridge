@@ -108,7 +108,24 @@ final class GestureTests: XCTestCase {
         frame([(140, 100), (160, 100)])
         frame([(100, 100), (200, 100)])   // Abstand 20 -> 100: Pinch erkannt
         frame([(50, 100), (250, 100)])    // 100 -> 200: Cmd +
-        XCTAssertEqual(sink.events.last, "key cmd+\(Key.equal)")
+        XCTAssertEqual(sink.events.last, "key cmd+\(Key.zoomIn)")
+    }
+
+    func testAsymmetricPinchIsNotScroll() {
+        // ein Finger bleibt stehen, der andere wandert nach außen: Mittelpunkt bewegt sich, trotzdem Pinch
+        frame([(100, 100), (200, 100)])
+        frame([(100, 100), (230, 100)])
+        frame([(100, 100), (300, 100)])
+        frame([(100, 100), (360, 100)])
+        XCTAssertFalse(sink.events.contains { $0.hasPrefix("scroll") })
+        XCTAssertEqual(sink.events.last, "key cmd+\(Key.zoomIn)")
+    }
+
+    func testPinchZoomOut() {
+        frame([(50, 100), (250, 100)])
+        frame([(90, 100), (210, 100)])
+        frame([(120, 100), (180, 100)])
+        XCTAssertEqual(sink.events.last, "key cmd+\(Key.zoomOut)")
     }
 
     func testThreeFingerSwipeLeftSwitchesSpace() {

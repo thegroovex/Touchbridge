@@ -1,5 +1,8 @@
 import CoreGraphics
 import Foundation
+#if canImport(Carbon)
+import Carbon
+#endif
 
 // MARK: - Synthetische macOS-Events
 
@@ -67,6 +70,45 @@ public final class EventPoster: EventSink {
 public enum Key {
     public static let left: CGKeyCode = 123, right: CGKeyCode = 124, down: CGKeyCode = 125, up: CGKeyCode = 126
     public static let equal: CGKeyCode = 24, minus: CGKeyCode = 27
+    /// Zoom-Tasten passend zur aktiven Tastaturbelegung (DE: „+“ = 0x1E, „-“ = 0x2C; US: „=“ = 0x18, „-“ = 0x1B)
+    public static var zoomIn: CGKeyCode { KeyLayout.shared.code(for: ["+", "="]) ?? equal }
+    public static var zoomOut: CGKeyCode { KeyLayout.shared.code(for: ["-"]) ?? minus }
+}
+
+/// Sucht die Taste, die in der aktuellen Belegung (ohne Shift) ein bestimmtes Zeichen erzeugt
+public final class KeyLayout {
+    public static let shared = KeyLayout()
+    private var cache: [String: CGKeyCode] = [:]
+    private var layoutID = ""
+
+    public func code(for chars: [String]) -> CGKeyCode? {
+        #if canImport(Carbon)
+        guard let src = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
+              let raw = TISGetInputSourceProperty(src, kTISPropertyUnicodeKeyLayoutData) else { return nil }
+        let idPtr = TISGetInputSourceProperty(src, kTISPropertyInputSourceID)
+        let id = idPtr.map { Unmanaged<CFString>.fromOpaque($0).takeUnretainedValue() as String } ?? ""
+        if id != layoutID { cache = [:]; layoutID = id }
+        let key = chars.joined()
+        if let c = cache[key] { return c }
+        let data = Unmanaged<CFData>.fromOpaque(raw).takeUnretainedValue() as Data
+        var table: [String: CGKeyCode] = [:]
+        data.withUnsafeBytes { buf in
+            guard let layout = buf.baseAddress?.assumingMemoryBound(to: UCKeyboardLayout.self) else { return }
+            for code in 0..<128 {
+                var dead: UInt32 = 0
+                var len = 0
+                var out = [UniChar](repeating: 0, count: 4)
+                let rc = UCKeyTranslate(layout, UInt16(code), UInt16(kUCKeyActionDown), 0, UInt32(LMGetKbdType()),
+                                        OptionBits(kUCKeyTranslateNoDeadKeysBit), &dead, 4, &len, &out)
+                guard rc == noErr, len == 1 else { continue }
+                let ch = String(utf16CodeUnits: out, count: 1)
+                if table[ch] == nil { table[ch] = CGKeyCode(code) }
+            }
+        }
+        for ch in chars { if let c = table[ch] { cache[key] = c; return c } }
+        #endif
+        return nil
+    }
 }
 
 // MARK: - Gesten
@@ -78,7 +120,7 @@ public struct GestureConfig {
     public var longPress: Double = 0.65       // Halten = Rechtsklick
     public var doubleTapInterval: Double = 0.4
     public var scrollThreshold: CGFloat = 10
-    public var pinchThreshold: CGFloat = 45
+    public var pinchThreshold: CGFloat = 36
     public var swipeDistance: CGFloat = 90
     public var invertScroll = false
     public var scrollGain: CGFloat = 1.0
@@ -160,13 +202,15 @@ public final class GestureEngine {
             case .pinching:
                 if pinchRef > 0 {
                     let r = d / pinchRef
-                    if r > 1.3 { poster.key(Key.equal, flags: .maskCommand); pinchRef = d }
-                    else if r < 0.77 { poster.key(Key.minus, flags: .maskCommand); pinchRef = d }
+                    if r > 1.18 { poster.key(Key.zoomIn, flags: .maskCommand); pinchRef = d }
+                    else if r < 0.85 { poster.key(Key.zoomOut, flags: .maskCommand); pinchRef = d }
                 }
             case .twoFinger:
-                if abs(d - d0) > cfg.pinchThreshold {
+                // Pinch vs. Scrollen: beim Pinch ändert sich der Fingerabstand stärker als der Mittelpunkt wandert
+                let spread = abs(d - d0), move = hypot(c.x - c0.x, c.y - c0.y)
+                if spread > cfg.pinchThreshold || (spread > cfg.pinchThreshold * 0.5 && spread > move) {
                     mode = .pinching; pinchRef = d
-                } else if hypot(c.x - c0.x, c.y - c0.y) > cfg.scrollThreshold {
+                } else if move > cfg.scrollThreshold && spread < move * 0.6 {
                     mode = .scrolling; lastC = c; remX = 0; remY = 0
                     poster.scroll(dx: 0, dy: 0, phase: 1)
                 }

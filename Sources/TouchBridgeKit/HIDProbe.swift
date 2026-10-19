@@ -167,7 +167,16 @@ public final class HIDProbe {
         }
         log("Gefundene HID-Interfaces: \(devs.count)")
 
+        // ein IOHIDDevice-Objekt pro Interface (prozessweit), doppelte Treffer verwerfen
+        var seen = Set<UInt64>()
+        devs = devs.map { HIDOpenRegistry.shared.canonical($0) }.filter { c in
+            guard let id = c.id else { return true }
+            return seen.insert(id).inserted
+        }.map { $0.device }
         for (i, d) in devs.enumerated() {
+            if HIDOpenRegistry.shared.isOpen(d) {
+                log("   ❌ [IF \(i)] ist bereits geöffnet (Touch-Dienst läuft noch?) – wird für die Diagnose geschlossen und neu geöffnet")
+            }
             let maxIn = Self.prop(d, kIOHIDMaxInputReportSizeKey) as? Int ?? 0
             let maxFeat = Self.prop(d, kIOHIDMaxFeatureReportSizeKey) as? Int ?? 0
             let loc = Self.prop(d, kIOHIDLocationIDKey) as? Int ?? 0
@@ -180,12 +189,13 @@ public final class HIDProbe {
             log(String(format: "   PrimaryUsagePage/Usage 0x%02X/0x%02X  DeviceUsagePairs [%@]",
                        Self.prop(d, kIOHIDPrimaryUsagePageKey) as? Int ?? 0, Self.prop(d, kIOHIDPrimaryUsageKey) as? Int ?? 0,
                        pairs.joined(separator: ", ")))
-            log(String(format: "   MaxInputReportSize %d  MaxFeatureReportSize %d  Transport %@  LocationID 0x%08X",
-                       maxIn, maxFeat, (Self.prop(d, kIOHIDTransportKey) as? String ?? "?"), loc))
+            log(String(format: "   MaxInputReportSize %d  MaxFeatureReportSize %d  Transport %@  LocationID 0x%08X  RegistryID 0x%llX",
+                       maxIn, maxFeat, (Self.prop(d, kIOHIDTransportKey) as? String ?? "?"), loc,
+                       HIDOpenRegistry.registryID(d) ?? 0))
 
             let iface = Interface(index: i, device: d, size: max(maxIn, 256))
             iface.probe = self
-            iface.openRC = IOHIDDeviceOpen(d, IOOptionBits(kIOHIDOptionsTypeNone))
+            iface.openRC = HIDOpenRegistry.shared.open(d, seize: false)
             log("   IOHIDDeviceOpen (ohne Seize): " + HIDReturn.describe(iface.openRC))
 
             if let data = Self.prop(d, kIOHIDReportDescriptorKey) as? Data {
@@ -284,7 +294,7 @@ public final class HIDProbe {
             IOHIDDeviceRegisterInputReportCallback(f.device, f.buffer, f.size, nil, nil)
             IOHIDDeviceRegisterInputValueCallback(f.device, nil, nil)
             IOHIDDeviceUnscheduleFromRunLoop(f.device, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
-            if f.openRC == kIOReturnSuccess { IOHIDDeviceClose(f.device, IOOptionBits(kIOHIDOptionsTypeNone)) }
+            if f.openRC == kIOReturnSuccess { HIDOpenRegistry.shared.close(f.device) }
         }
         manager = nil
         // Interfaces erst nach dem Runloop-Durchlauf freigeben (Callbacks sind abgemeldet)

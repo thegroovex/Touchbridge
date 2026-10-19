@@ -146,9 +146,23 @@ public final class Updater {
         } else { throw UpdateError.wrongVersion(ver) }
         let sig = Updater.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", newApp.path])
         guard sig.status == 0 else { throw UpdateError.signature(sig.output) }
+        // Gleiches Leaf-Zertifikat wie die laufende App (sofern diese schon mit dem TouchBridge-Zertifikat signiert ist) –
+        // nur dann bleiben die TCC-Rechte (Eingabeüberwachung, Bedienungshilfen) erhalten.
+        let currentLeaf = SystemCheck.leafSHA1(of: Bundle.main.bundleURL)
+        let newLeaf = SystemCheck.leafSHA1(of: newApp)
+        let decision = SigningPolicy.checkUpdate(currentLeaf: currentLeaf, newLeaf: newLeaf)
+        switch decision {
+        case .rejected(let why): throw UpdateError.signature(why)
+        case .allowed(let why): log("🔏 Zertifikat: \(why)")
+        }
+        if let cur = currentLeaf {
+            let req = "certificate leaf = H\"\(cur.lowercased())\""
+            let r = Updater.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "-R=\(req)", newApp.path])
+            guard r.status == 0 else { throw UpdateError.signature("Anforderung „\(req)“ nicht erfüllt: \(r.output)") }
+        }
         // Gatekeeper: heruntergeladene App ist ad-hoc signiert – Quarantäne entfernen (vom User ausdrücklich gewünscht)
         Updater.run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", newApp.path])
-        log("✅ TouchBridge \(ver) geprüft (Bundle-ID, Version, Signatur).")
+        log("✅ TouchBridge \(ver) geprüft (Bundle-ID, Version, Signatur, Zertifikat).")
         return newApp
     }
 

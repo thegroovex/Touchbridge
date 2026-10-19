@@ -33,11 +33,13 @@ public struct TouchSettings: Codable, Equatable {
     public var scale: Scale = .chromatic
     public var bendRange = 48
     public var showOverlay = true
+    /// Wenn eine Schnittstelle nicht exklusiv ist: macOS-eigene Maus-Events des Touch-Monitors per Event-Tap verwerfen
+    public var suppressSystemPointer = true
     public init() {}
 
     enum CodingKeys: String, CodingKey {
         case enabled, displayID, rotation, flipX, flipY, swapXY, invertScroll, scrollGain, seize, vid, pid
-        case mode, midiLayout, mpe, midiChannel, baseNote, scale, bendRange, showOverlay
+        case mode, midiLayout, mpe, midiChannel, baseNote, scale, bendRange, showOverlay, suppressSystemPointer
     }
 
     /// Fehlende Schlüssel (ältere gespeicherte Einstellungen) fallen auf die Standardwerte zurück.
@@ -64,6 +66,7 @@ public struct TouchSettings: Codable, Equatable {
         scale = v(.scale, d.scale)
         bendRange = max(1, min(96, v(.bendRange, d.bendRange)))
         showOverlay = v(.showOverlay, d.showOverlay)
+        suppressSystemPointer = v(.suppressSystemPointer, d.suppressSystemPointer)
     }
 
     public var mapping: TouchMapping { TouchMapping(rotation: rotation, flipX: flipX, flipY: flipY, swapXY: swapXY) }
@@ -87,18 +90,50 @@ public struct TouchSettings: Codable, Equatable {
 
 public enum Permissions {
     public static var accessibility: Bool { AXIsProcessTrusted() }
+    /// Zeigt den Bedienungshilfen-Dialog („… möchte diesen Mac steuern“), falls nicht erteilt.
     public static func requestAccessibility() {
+        askedAccessibility = true
         let o = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(o)
     }
     public static var inputMonitoring: Bool { IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted }
-    public static var inputMonitoringState: String {
+    public static var accessCheck: AccessCheck {
         let a = IOHIDCheckAccess(kIOHIDRequestTypeListenEvent)
-        if a == kIOHIDAccessTypeGranted { return "erteilt" }
-        if a == kIOHIDAccessTypeDenied { return "ABGELEHNT" }
-        return "noch nicht entschieden"
+        if a == kIOHIDAccessTypeGranted { return .granted }
+        if a == kIOHIDAccessTypeDenied { return .denied }
+        return .unknown
     }
-    public static func requestInputMonitoring() { _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent) }
+    public static var inputMonitoringState: String {
+        switch accessCheck {
+        case .granted: return "erteilt"
+        case .denied: return "ABGELEHNT"
+        case .unknown: return "noch nicht entschieden"
+        }
+    }
+    public static func requestInputMonitoring() {
+        askedInputMonitoring = true
+        _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
+    }
+
+    // Nur EINMAL automatisch fragen (gemerkt in den Einstellungen); danach nur noch Hinweis im Menü.
+    public static var askedAccessibility: Bool {
+        get { UserDefaults.standard.bool(forKey: "askedAccessibility") }
+        set { UserDefaults.standard.set(newValue, forKey: "askedAccessibility") }
+    }
+    public static var askedInputMonitoring: Bool {
+        get { UserDefaults.standard.bool(forKey: "askedInputMonitoring") }
+        set { UserDefaults.standard.set(newValue, forKey: "askedInputMonitoring") }
+    }
+    public static func requestAccessibilityOnce() {
+        guard !accessibility, !askedAccessibility else { return }
+        requestAccessibility()
+    }
+    public static func requestInputMonitoringOnce() {
+        guard !inputMonitoring, !askedInputMonitoring else { return }
+        requestInputMonitoring()
+    }
+    /// Nach „Berechtigungen zurücksetzen“: wieder fragen dürfen
+    public static func forgetAsked() { askedAccessibility = false; askedInputMonitoring = false }
 }
 
 /// Liest HID-Multitouch-Geräte und speist Gesten als macOS-Events ein. Läuft auf dem Main-Runloop.
@@ -111,12 +146,36 @@ public final class TouchService {
         public var inputMonitoring = true
         /// Grund, warum das Gerät nicht exklusiv ist (Return-Code von IOHIDDeviceOpen mit Seize)
         public var seizeError: String? = nil
+        /// Geöffnete Schnittstellen des Touch-Monitors (Touch, Maus, Vendor …) mit Exklusiv-Status
+        public var interfaces: [InterfaceStatus] = []
+        /// Fehlgeschlagene IOHIDDeviceOpen-Return-Codes (für die Berechtigungs-Auswertung)
+        public var openFailures: [UInt32] = []
+        /// Mindestens ein Touch-Report ist angekommen
+        public var receiving = false
+        /// alter LaunchAgent gefunden (Menü bietet Entfernen an)
+        public var legacyAgent = false
+        /// Event-Tap-Fallback aktiv
+        public var suppressing = false
     }
+    /// Berechtigung nach tatsächlicher Wirkung (Reports, Return-Codes), nicht nur nach IOHIDCheckAccess
+    public var inputMonitoringState: InputMonitoringState {
+        InputMonitoringState.evaluate(check: Permissions.accessCheck, openRCs: status.openFailures,
+                                      reports: reportCount, asked: Permissions.askedInputMonitoring)
+    }
+    /// Event-Tap-Fallback, wenn eine Schnittstelle nicht exklusiv ist
+    public let suppressor = PointerSuppressor()
+    /// Zeit des letzten Touch-Reports und ob gerade berührt wird (für den Event-Tap)
+    public private(set) var lastTouchReport: Double?
+    fileprivate func touchReportSeen() { lastTouchReport = CFAbsoluteTimeGetCurrent() }
+    private var registry: HIDOpenRegistry { HIDOpenRegistry.shared }
     /// Return-Codes beim Öffnen / Input Mode je Gerät (für Diagnose und Menü)
     public private(set) var openLog: [String] = []
     /// Anzahl empfangener HID-Input-Reports seit start()
     public private(set) var reportCount = 0
-    fileprivate func countReport() { reportCount += 1 }
+    fileprivate func countReport() {
+        reportCount += 1
+        if !status.receiving { status.receiving = true }
+    }
 
     public var settings: TouchSettings {
         didSet {
@@ -134,6 +193,7 @@ public final class TouchService {
                 || settings.baseNote != oldValue.baseNote || settings.scale != oldValue.scale {
                 onMIDIUpdate?()
             }
+            if settings.suppressSystemPointer != oldValue.suppressSystemPointer { updateSuppression() }
             if settings.enabled != oldValue.enabled || settings.effectiveSeize != oldValue.effectiveSeize
                 || settings.vid != oldValue.vid || settings.pid != oldValue.pid || settings.mode != oldValue.mode {
                 if running { stop(); start() }
@@ -165,6 +225,8 @@ public final class TouchService {
     public init(settings: TouchSettings, gestureBase: GestureConfig = GestureConfig()) {
         self.settings = settings
         self.gestureBase = gestureBase
+        suppressor.lastReport = { [weak self] in self?.lastTouchReport }
+        suppressor.touching = { [weak self] in self?.devices.contains(where: \.hadContacts) ?? false }
     }
 
     /// Hersteller-/Produktnamen der geöffneten Touch-Geräte (für die automatische Bildschirmwahl)
@@ -189,11 +251,12 @@ public final class TouchService {
         reportCount = 0
         guard settings.enabled || dumpMode else { status = Status(running: false); return }
 
+        suppressor.log = log
         let access = Permissions.inputMonitoring
         log("🔐 Eingabeüberwachung: \(Permissions.inputMonitoringState)")
         if !access {
-            Permissions.requestInputMonitoring()
-            log("⚠️  Ohne Eingabeüberwachung liefert macOS keine Touch-Reports. Systemeinstellungen › Datenschutz & Sicherheit › Eingabeüberwachung › TouchBridge erlauben, dann neu starten.")
+            // Anfragen übernimmt der Aufrufer (App: nur einmal); hier nur Hinweis
+            log("⚠️  Ohne Eingabeüberwachung liefert macOS keine Touch-Reports. Systemeinstellungen › Datenschutz & Sicherheit › Eingabeüberwachung › TouchBridge erlauben.")
         }
 
         // Der Manager dient nur zum Finden der Geräte. Geöffnet wird jedes Gerät einzeln (IOHIDDeviceOpen),
@@ -211,6 +274,7 @@ public final class TouchService {
         }, ctx)
         IOHIDManagerScheduleWithRunLoop(m, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
         status = Status(running: true, devices: [], exclusive: false, lastError: nil, inputMonitoring: access)
+        lastTouchReport = nil
         // Bereits angeschlossene Geräte sofort übernehmen (der Matching-Callback dedupliziert)
         if let set = IOHIDManagerCopyDevices(m) as? Set<IOHIDDevice> {
             for d in set { attach(d) }
@@ -247,6 +311,7 @@ public final class TouchService {
         // erst Callbacks abmelden und Geräte schließen, dann Buffer/Context freigeben
         for d in devices { d.close() }
         devices.removeAll()
+        suppressor.stop()
         if let m = manager {
             IOHIDManagerRegisterDeviceMatchingCallback(m, nil, nil)
             IOHIDManagerRegisterDeviceRemovalCallback(m, nil, nil)
@@ -281,91 +346,152 @@ public final class TouchService {
         onMIDIUpdate?()
     }
 
-    /// Öffnet ein Gerät (Seize mit Fallback auf nicht exklusiv). quiet: bei Wiederholungen nur Änderungen loggen.
+    /// Öffnet ein Interface genau einmal (Seize mit Fallback auf nicht exklusiv). quiet: bei Wiederholungen nur Änderungen loggen.
     private func open(_ d: TouchDevice, quiet: Bool) -> IOReturn {
         let seize = settings.effectiveSeize
         var rc: IOReturn
         d.exclusive = false
         if seize {
-            rc = IOHIDDeviceOpen(d.device, IOOptionBits(kIOHIDOptionsTypeSeizeDevice))
+            rc = registry.open(d.device, seize: true)
             if !quiet || rc != d.lastSeizeRC {
-                note("   IOHIDDeviceOpen (Seize/exklusiv) \(d.name): " + HIDReturn.describe(rc))
+                note("   IOHIDDeviceOpen (Seize/exklusiv) \(d.label): " + HIDReturn.describe(rc))
             }
             d.lastSeizeRC = rc
             if rc == kIOReturnSuccess {
                 d.exclusive = true
-                status.seizeError = nil
                 return rc
             }
-            status.seizeError = rc == HIDReturn.exclusiveAccess
-                ? "Gerät belegt (exklusiv) – läuft TouchBridge doppelt (App + CLI)?"
-                : (rc == HIDReturn.notPermitted ? "Keine Berechtigung für exklusiven Zugriff" : "Seize fehlgeschlagen " + HIDReturn.describe(rc))
+            if !quiet || d.seizeMessage == nil { d.seizeMessage = seizeMessage(rc) }
             if !quiet {
-                note("⚠️  Exklusiver Zugriff nicht möglich – öffne nicht exklusiv und versuche es alle 2 s erneut. "
-                     + "Bis dahin bewegt macOS zusätzlich selbst den Zeiger.")
+                note("⚠️  \(d.label): exklusiver Zugriff nicht möglich (\(d.seizeMessage ?? "")) – öffne nicht exklusiv, neuer Versuch alle 2 s.")
             }
         }
-        rc = IOHIDDeviceOpen(d.device, IOOptionBits(kIOHIDOptionsTypeNone))
-        if !quiet || rc != d.lastOpenRC { note("   IOHIDDeviceOpen (nicht exklusiv) \(d.name): " + HIDReturn.describe(rc)) }
+        rc = registry.open(d.device, seize: false)
+        if !quiet || rc != d.lastOpenRC { note("   IOHIDDeviceOpen (nicht exklusiv) \(d.label): " + HIDReturn.describe(rc)) }
         d.lastOpenRC = rc
         return rc
     }
 
-    /// Alle 2 s: nicht geöffnete Geräte erneut öffnen, nicht exklusive Geräte erneut exklusiv anfordern.
+    /// Meldung für einen gescheiterten Seize – „läuft doppelt“ nur, wenn wirklich ein zweiter Prozess/LaunchAgent existiert.
+    private func seizeMessage(_ rc: IOReturn) -> String {
+        let code = UInt32(bitPattern: rc)
+        var others: [OtherInstance] = []
+        var agent = false
+        var holders: [String] = []
+        if code == HIDReturnCode.exclusiveAccess {
+            others = SystemCheck.otherInstances()
+            agent = SystemCheck.legacyAgentPresent
+            status.legacyAgent = agent
+            if others.isEmpty && !agent {
+                let r = SystemCheck.holderReport(vid: settings.vid ?? HIDProbe.anmiteVID, pid: settings.pid ?? HIDProbe.anmitePID)
+                for i in r.duplicateOwnClients(ownPID: getpid()) {
+                    note("❌ TouchBridge hält \(i.name) (id \(i.registryID.map { String(format: "0x%llX", $0) } ?? "?")) doppelt offen")
+                }
+                holders = r.likelyHolders(ownPID: getpid())
+                if !holders.isEmpty { note("   Mögliche Halter laut ioreg: " + holders.joined(separator: "; ")) }
+            }
+        }
+        return HIDOpenMessages.seizeFailure(rc: code, others: others, legacyAgent: agent, holders: holders)
+    }
+
+    /// Alle 2 s: nicht geöffnete Geräte erneut öffnen, nicht exklusive Geräte erneut exklusiv anfordern
+    /// (vorher sauber schließen – nie ein zweites IOHIDDeviceOpen auf ein offenes Interface).
     private func retryDevices() {
         guard running else { return }
         for dev in pending { attach(dev, quiet: true) }
-        guard settings.effectiveSeize else { return }
-        for d in devices where !d.exclusive && !d.hadContacts {   // nie mitten in einer Berührung
-            d.close()
-            let rc = open(d, quiet: true)
-            if rc == kIOReturnSuccess { d.start() } else { devices.removeAll { $0 === d }; pending.append(d.device) }
-            if d.exclusive { note("✅ \(d.name) jetzt exklusiv übernommen.") }
+        if settings.effectiveSeize {
+            for d in devices where !d.exclusive && !d.hadContacts {   // nie mitten in einer Berührung
+                d.close()
+                let rc = open(d, quiet: true)
+                if rc == kIOReturnSuccess { d.start() } else { devices.removeAll { $0 === d }; pending.append(d.device) }
+                if d.exclusive { note("✅ \(d.label) jetzt exklusiv übernommen."); d.seizeMessage = nil }
+            }
         }
-        status.devices = devices.map(\.name)
+        refreshStatus()
+    }
+
+    private func refreshStatus() {
+        status.devices = devices.filter(\.isTouch).map(\.name)
+        status.interfaces = devices.map { InterfaceStatus(registryID: $0.registryID ?? 0, role: $0.role, exclusive: $0.exclusive) }
         status.exclusive = !devices.isEmpty && devices.allSatisfy(\.exclusive)
+        status.seizeError = devices.first(where: { !$0.exclusive && $0.seizeMessage != nil })
+            .map { "\($0.role.rawValue): \($0.seizeMessage ?? "")" }
+        updateSuppression()
+    }
+
+    /// Event-Tap-Fallback ein, wenn eine Schnittstelle nicht exklusiv ist (und die Option an ist), sonst aus.
+    private func updateSuppression() {
+        let want = running && settings.enabled && !dumpMode && settings.suppressSystemPointer
+            && devices.contains(where: { !$0.exclusive })
+        if want {
+            suppressor.deviceIDs = Set(devices.flatMap { HIDOpenRegistry.descendantIDs($0.device) })
+            if !suppressor.active { suppressor.start() }
+        } else if suppressor.active {
+            suppressor.stop()
+        }
+        status.suppressing = suppressor.active
+    }
+
+    /// Schnittstellen des Touch-Monitors: per VID/PID (vorgegeben oder Anmite) – dann werden auch Maus-/Vendor-
+    /// Schnittstellen exklusiv übernommen, damit macOS den Zeiger nicht selbst bewegt.
+    private func isMonitorInterface(_ device: IOHIDDevice) -> Bool {
+        let vid = (IOHIDDeviceGetProperty(device, kIOHIDVendorIDKey as CFString) as? Int) ?? 0
+        let pid = (IOHIDDeviceGetProperty(device, kIOHIDProductIDKey as CFString) as? Int) ?? 0
+        if settings.vid != nil || settings.pid != nil {
+            return (settings.vid == nil || settings.vid == vid) && (settings.pid == nil || settings.pid == pid)
+        }
+        return vid == HIDProbe.anmiteVID && pid == HIDProbe.anmitePID
     }
 
     private func attach(_ device: IOHIDDevice) { attach(device, quiet: false) }
 
-    private func attach(_ device: IOHIDDevice, quiet: Bool) {
+    private func attach(_ raw: IOHIDDevice, quiet: Bool) {
         guard running, manager != nil else { return }
-        guard !devices.contains(where: { $0.device === device }) else { return }
-        guard let d = TouchDevice(device: device, service: self, quiet: quiet) else { return }
+        // ein IOHIDDevice-Objekt pro Registry-ID, jedes Interface genau einmal
+        let (device, rid) = registry.canonical(raw)
+        guard !devices.contains(where: { $0.device === device || ($0.registryID != nil && $0.registryID == rid) }) else { return }
+        guard let d = TouchDevice(device: device, service: self, registryID: rid, auxiliary: isMonitorInterface(device), quiet: quiet) else { return }
         let rc = open(d, quiet: quiet)
         guard rc == kIOReturnSuccess else {
-            let msg = rc == HIDReturn.notPermitted
-                ? "Keine Berechtigung (kIOReturnNotPermitted) – Eingabeüberwachung für TouchBridge erlauben und neu starten."
-                : (rc == HIDReturn.exclusiveAccess ? "Gerät belegt (exklusiv) – anderer Prozess hält es"
-                                                    : "Touch-Gerät ließ sich nicht öffnen: " + HIDReturn.describe(rc))
-            if !quiet { note("❌ " + msg) }
-            status.lastError = msg
+            let code = UInt32(bitPattern: rc)
+            let msg = HIDOpenMessages.openFailure(rc: code, others: code == HIDReturnCode.exclusiveAccess ? SystemCheck.otherInstances() : [],
+                                                  legacyAgent: code == HIDReturnCode.exclusiveAccess && SystemCheck.legacyAgentPresent)
+            if !quiet { note("❌ \(d.label): " + msg) }
+            if d.isTouch { status.lastError = msg }
+            if !status.openFailures.contains(code) { status.openFailures.append(code) }
             if !pending.contains(where: { $0 === device }) { pending.append(device) }
             return
         }
         pending.removeAll { $0 === device }
+        status.openFailures.removeAll()
         let exclusive = d.exclusive
         d.start()
         devices.append(d)
-        if let r = HIDFeature.applyInputMode(device, descriptor: d.descriptor, name: d.name, log: { [weak self] in self?.note($0) }) {
+        if d.isTouch, let r = HIDFeature.applyInputMode(device, descriptor: d.descriptor, name: d.name, log: { [weak self] in self?.note($0) }) {
             if r != kIOReturnSuccess { note("   (Input Mode ließ sich nicht setzen – Touch kann trotzdem funktionieren)") }
         }
-        status.devices = devices.map(\.name)
-        status.exclusive = devices.allSatisfy(\.exclusive)
-        status.lastError = nil
+        if d.isTouch { status.lastError = nil }
         deviceHints = devices.flatMap(\.hints)
-        let b = CGDisplayBounds(targetDisplay)
-        note("🖥  Touch-Ziel: \(Displays.name(of: targetDisplay)) (id \(targetDisplay)) \(Int(b.width))×\(Int(b.height)) @ (\(Int(b.minX)),\(Int(b.minY)))"
-             + (exclusive ? " – exklusiv" : " – NICHT exklusiv"))
+        refreshStatus()
+        if d.isTouch {
+            let b = CGDisplayBounds(targetDisplay)
+            note("🖥  Touch-Ziel: \(Displays.name(of: targetDisplay)) (id \(targetDisplay)) \(Int(b.width))×\(Int(b.height)) @ (\(Int(b.minX)),\(Int(b.minY)))"
+                 + (exclusive ? " – exklusiv" : " – NICHT exklusiv"))
+        } else {
+            note("🔒 Schnittstelle \(d.label) " + (exclusive ? "exklusiv übernommen (macOS bekommt keine Events mehr davon)" : "NICHT exklusiv geöffnet"))
+        }
+        note("   " + InterfaceStatus.summary(status.interfaces))
     }
 
-    private func detach(_ device: IOHIDDevice) {
-        pending.removeAll { $0 === device }
+    private func detach(_ raw: IOHIDDevice) {
+        let rid = HIDOpenRegistry.registryID(raw)
+        let same: (IOHIDDevice) -> Bool = { $0 === raw || (rid != nil && HIDOpenRegistry.registryID($0) == rid) }
+        pending.removeAll(where: same)
         devices.removeAll { d in
-            if d.device === device { log("🔌 Gerät getrennt: \(d.name)"); d.close(); return true }
+            if same(d.device) { log("🔌 Gerät getrennt: \(d.label)"); d.close(); registry.forget(d.device); return true }
             return false
         }
-        status.devices = devices.map(\.name)
+        refreshStatus()
     }
 
     fileprivate func deliver(_ contacts: [RawContact], layout: TouchLayout) {
@@ -386,6 +512,8 @@ public final class TouchService {
             map.screenPoint(TouchMapping.normalize($0.x, min: xf.logicalMin, max: xf.logicalMax),
                             TouchMapping.normalize($0.y, min: yf.logicalMin, max: yf.logicalMax), in: rect)
         }
+        // Nicht exklusiv: macOS bewegt den Zeiger zusätzlich selbst (relativ) – Position absolut auf den Touch-Bildschirm korrigieren
+        if !dumpMode, suppressor.active, points.count == 1 { CGWarpMouseCursorPosition(points[0]) }
         if dumpMode {
             let s = zip(contacts, points).map { c, p in "#\(c.id) raw(\(c.x),\(c.y)) -> (\(Int(p.x)),\(Int(p.y)))" }
                 .joined(separator: "  ")
@@ -411,6 +539,12 @@ final class TouchDevice {
     let buffer: UnsafeMutablePointer<UInt8>
     let descriptor: HIDDescriptor
     let hints: [String]
+    let registryID: UInt64?
+    let role: InterfaceRole
+    /// Interface liefert Multitouch-Frames (sonst nur exklusiv halten, Reports verwerfen/protokollieren)
+    var isTouch: Bool { !assembler.layouts.isEmpty }
+    var label: String { "\(name) [\(role.rawValue)" + (registryID.map { String(format: " 0x%llX", $0) } ?? "") + "]" }
+    var seizeMessage: String?
     var exclusive = false
     private var started = false
     private var assembler: TouchFrameAssembler
@@ -420,7 +554,7 @@ final class TouchDevice {
     var lastSeizeRC: IOReturn = kIOReturnSuccess
     var lastOpenRC: IOReturn = kIOReturnSuccess
 
-    init?(device: IOHIDDevice, service: TouchService, quiet: Bool = false) {
+    init?(device: IOHIDDevice, service: TouchService, registryID: UInt64?, auxiliary: Bool, quiet: Bool = false) {
         let log: (String) -> Void = quiet ? { _ in } : service.log
         let nm = (IOHIDDeviceGetProperty(device, kIOHIDProductKey as CFString) as? String) ?? "Touch-Gerät"
         guard let data = IOHIDDeviceGetProperty(device, kIOHIDReportDescriptorKey as CFString) as? Data else {
@@ -432,10 +566,20 @@ final class TouchDevice {
         let pid = (IOHIDDeviceGetProperty(device, kIOHIDProductIDKey as CFString) as? Int) ?? 0
         log("🖐  Gerät: \(nm)  (VID " + String(format: "0x%04X", vid) + ", PID " + String(format: "0x%04X", pid) + ")")
         let hex = data.map { String(format: "%02X", $0) }.joined(separator: " ")
+        let pairs: [(Int, Int)] = (IOHIDDeviceGetProperty(device, kIOHIDDeviceUsagePairsKey as CFString) as? [[String: Any]] ?? []).map {
+            ($0[kIOHIDDeviceUsagePageKey] as? Int ?? 0, $0[kIOHIDDeviceUsageKey] as? Int ?? 0)
+        } + [((IOHIDDeviceGetProperty(device, kIOHIDPrimaryUsagePageKey as CFString) as? Int) ?? 0,
+              (IOHIDDeviceGetProperty(device, kIOHIDPrimaryUsageKey as CFString) as? Int) ?? 0)]
+        let role = InterfaceRole.classify(usagePairs: pairs, hasTouchLayout: !asm.layouts.isEmpty)
+        log("   Schnittstelle: \(role.rawValue)  id " + (registryID.map { String(format: "0x%llX", $0) } ?? "?")
+            + "  UsagePairs " + pairs.map { String(format: "0x%02X/0x%02X", $0.0, $0.1) }.joined(separator: ", "))
         if asm.layouts.isEmpty {
-            log("⚠️  Keine Multitouch-Finger im Descriptor gefunden. Descriptor (hex):")
-            log(hex)
-            return nil
+            guard auxiliary else {
+                log("⚠️  Keine Multitouch-Finger im Descriptor gefunden. Descriptor (hex):")
+                log(hex)
+                return nil
+            }
+            log("   (keine Touch-Finger – wird nur exklusiv gehalten, damit macOS daraus keine Zeiger-Events macht)")
         }
         for (rid, l) in asm.layouts.sorted(by: { $0.key < $1.key }) {
             log("   Report \(rid): \(l.fingers.count) Finger-Slots, Contact Count: \(l.contactCount != nil ? "ja" : "nein")")
@@ -456,6 +600,8 @@ final class TouchDevice {
         self.hints = [nm, (IOHIDDeviceGetProperty(device, kIOHIDManufacturerKey as CFString) as? String) ?? "",
                       vid == HIDProbe.anmiteVID ? "ANMITE" : ""].filter { !$0.isEmpty }
         self.assembler = asm
+        self.registryID = registryID
+        self.role = role
         self.bufferSize = max(maxSize, 256)
         self.buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: max(maxSize, 256))
     }
@@ -478,7 +624,7 @@ final class TouchDevice {
         IOHIDDeviceRegisterInputReportCallback(device, buffer, bufferSize, nil, nil)
         IOHIDDeviceRegisterInputValueCallback(device, nil, nil)
         IOHIDDeviceUnscheduleFromRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
-        IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
+        HIDOpenRegistry.shared.close(device)
     }
 
     func start() {
@@ -499,8 +645,15 @@ final class TouchDevice {
     }
 
     private func handle(_ r: UnsafeBufferPointer<UInt8>) {
-        service.countReport()
         reports += 1
+        guard isTouch else {
+            if reports <= 3 || (service.dumpMode && reports <= 20) {
+                service.log("ℹ️  \(label): Report #\(reports) (\(r.count) Bytes, verworfen): " + HIDFeature.hex(Array(r.prefix(16))))
+            }
+            return
+        }
+        service.countReport()
+        service.touchReportSeen()
         if reports == 1 { service.log("✅ \(name): erster Touch-Report empfangen (\(r.count) Bytes).") }
         guard let result = assembler.feed(r) else { return }
         lastReport = CFAbsoluteTimeGetCurrent()

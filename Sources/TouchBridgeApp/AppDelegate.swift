@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var signalSources: [DispatchSourceSignal] = []
     private var permissionTimer: Timer?
     private var hadInputMonitoring = Permissions.inputMonitoring
+    private var hadAccessibility = Permissions.accessibility
     private lazy var updater = Updater { [weak self] in self?.appendLog($0) }
     private var availableUpdate: ReleaseInfo?
     private var updateBusy = false
@@ -42,8 +43,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         service.onStatus = { [weak self] _ in self?.updateIcon() }
         service.onMIDIUpdate = { [weak self] in self?.refreshOverlayContent() }
 
-        if !Permissions.accessibility { Permissions.requestAccessibility() }
-        if !Permissions.inputMonitoring { Permissions.requestInputMonitoring() }
+        // Dialoge nur EINMAL (gemerkt); danach nur Hinweis im Menü – kein Prompt bei jedem Start
+        Permissions.requestAccessibilityOnce()
+        Permissions.requestInputMonitoringOnce()
         service.start()
         updateIcon()
         refreshControl()
@@ -69,6 +71,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.hadInputMonitoring = now
                 self.appendLog("🔐 Eingabeüberwachung jetzt: \(Permissions.inputMonitoringState)")
                 if now { self.restartService() } else { self.updateIcon() }
+            }
+            let ax = Permissions.accessibility
+            if ax != self.hadAccessibility {
+                self.hadAccessibility = ax
+                self.appendLog("🔐 Bedienungshilfen jetzt: \(ax ? "erteilt" : "fehlt")")
+                self.updateIcon()
             }
         }
         RunLoop.main.add(t, forMode: .common)
@@ -253,7 +261,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let st = service.status
         let symbol: String
         if !settings.enabled { symbol = "hand.raised.slash" }
-        else if !Permissions.inputMonitoring || st.lastError != nil { symbol = "exclamationmark.triangle" }
+        else if service.inputMonitoringState.isProblem || st.lastError != nil { symbol = "exclamationmark.triangle" }
         else if settings.mode == .midi { symbol = "pianokeys" }
         else if st.running && !st.devices.isEmpty { symbol = "hand.point.up.left.fill" }
         else { symbol = "hand.point.up.left" }
@@ -270,7 +278,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusText: String {
         let st = service.status
         if !settings.enabled { return "Touch aus" }
-        if !Permissions.inputMonitoring { return "Keine Berechtigung (Eingabeüberwachung)" }
+        let im = service.inputMonitoringState
+        if im.isProblem { return im.statusText }
         if let e = st.lastError { return e }
         if st.devices.isEmpty { return "Touch-Monitor nicht angeschlossen" }
         return st.devices.joined(separator: ", ") + (st.exclusive ? " – exklusiv" : " – nicht exklusiv")
@@ -331,19 +340,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                                                                  .font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)])
             menu.addItem(i)
         }
-        if !Permissions.inputMonitoring {
-            let w = NSMenuItem(title: "⚠️ Eingabeüberwachung fehlt – es kommen keine Touch-Daten an", action: nil, keyEquivalent: "")
-            w.attributedTitle = NSAttributedString(string: w.title, attributes: [
-                .foregroundColor: NSColor.systemRed, .font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)])
-            w.isEnabled = false
-            menu.addItem(w)
+        let im = service.inputMonitoringState
+        if im.isProblem {
+            menu.addItem(warning(im == .notDetermined ? "⚠️ Eingabeüberwachung noch nicht erlaubt – es kommen keine Touch-Daten an"
+                                                      : "⚠️ \(im.statusText) – es kommen keine Touch-Daten an", color: .systemRed, bold: true))
+            if im.suggestReset { menu.addItem(warning("   " + PermissionTexts.staleHint, color: .secondaryLabelColor)) }
             menu.addItem(action("Systemeinstellungen › Eingabeüberwachung öffnen …", #selector(openInputMonitoring)))
+            if im.suggestReset { menu.addItem(action("Berechtigungen zurücksetzen …", #selector(resetPermissions))) }
         }
-        if settings.enabled, let e = service.status.seizeError, !service.status.devices.isEmpty {
-            let w = NSMenuItem(title: "⚠️ Nicht exklusiv: \(e) – neuer Versuch alle 2 s", action: nil, keyEquivalent: "")
-            w.attributedTitle = NSAttributedString(string: w.title, attributes: [.foregroundColor: NSColor.systemOrange])
-            w.isEnabled = false
-            menu.addItem(w)
+        if let ax = PermissionTexts.accessibility(trusted: Permissions.accessibility, asked: Permissions.askedAccessibility),
+           settings.mode == .gestures {
+            menu.addItem(warning("⚠️ " + ax, color: .systemOrange))
+            if !im.suggestReset && Permissions.askedAccessibility { menu.addItem(action("Berechtigungen zurücksetzen …", #selector(resetPermissions))) }
+        }
+        if settings.enabled, !service.status.interfaces.isEmpty {
+            menu.addItem(warning(InterfaceStatus.summary(service.status.interfaces), color: .secondaryLabelColor))
+        }
+        if settings.enabled, let e = service.status.seizeError, !service.status.interfaces.isEmpty {
+            menu.addItem(warning("⚠️ Nicht exklusiv – \(e) – neuer Versuch alle 2 s", color: .systemOrange))
+            if service.status.suppressing {
+                menu.addItem(warning("   Systemzeiger wird per Event-Tap unterdrückt", color: .secondaryLabelColor))
+            }
+        }
+        if service.status.legacyAgent || SystemCheck.legacyAgentFilePresent {
+            menu.addItem(warning("⚠️ Alter LaunchAgent com.groovex.touchbridge (v0.1) gefunden", color: .systemOrange))
+            menu.addItem(action("Alten LaunchAgent entfernen", #selector(removeLegacyAgent)))
         }
         menu.addItem(toggle("Touch aktiv", settings.enabled, #selector(toggleEnabled), key: "t"))
         menu.addItem(.separator())
@@ -398,6 +419,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(submenu("Ausrichtung", orientationMenu()))
         menu.addItem(submenu("Scrollen", scrollMenu()))
         menu.addItem(toggle("Exklusiv übernehmen (empfohlen)", settings.seize, #selector(toggleSeize)))
+        menu.addItem(toggle("Systemzeiger vom Touch unterdrücken (wenn nicht exklusiv)", settings.suppressSystemPointer, #selector(toggleSuppress)))
         menu.addItem(.separator())
 
         // System
@@ -419,6 +441,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .contrast: return "circle.lefthalf.filled"
         case .volume: return "speaker.wave.2"
         }
+    }
+
+    private func warning(_ t: String, color: NSColor, bold: Bool = false) -> NSMenuItem {
+        let w = NSMenuItem(title: t, action: nil, keyEquivalent: "")
+        var attrs: [NSAttributedString.Key: Any] = [.foregroundColor: color]
+        if bold { attrs[.font] = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize) }
+        w.attributedTitle = NSAttributedString(string: t, attributes: attrs)
+        w.isEnabled = false
+        return w
     }
 
     private func sectionHeader(_ t: String) -> NSMenuItem {
@@ -532,7 +563,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                          Permissions.accessibility, #selector(openAccessibility)))
         m.addItem(toggle("Eingabeüberwachung" + (Permissions.inputMonitoring ? "" : " – fehlt"),
                          Permissions.inputMonitoring, #selector(openInputMonitoring)))
+        let im = service.inputMonitoringState
+        let state = NSMenuItem(title: "Wirkung: " + im.statusText, action: nil, keyEquivalent: "")
+        state.isEnabled = false
+        m.addItem(state)
         m.addItem(.separator())
+        m.addItem(action("Berechtigungen zurücksetzen …", #selector(resetPermissions)))
         m.addItem(action("Touch neu starten", #selector(restartService)))
         return m
     }
@@ -541,6 +577,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func toggleEnabled() { settings.enabled.toggle(); updateIcon() }
     @objc private func toggleSeize() { settings.seize.toggle() }
+    @objc private func toggleSuppress() { settings.suppressSystemPointer.toggle() }
     @objc private func toggleFlipX() { settings.flipX.toggle() }
     @objc private func toggleFlipY() { settings.flipY.toggle() }
     @objc private func toggleInvert() { settings.invertScroll.toggle() }
@@ -549,7 +586,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func selectDisplay(_ s: NSMenuItem) { settings.displayID = s.tag == 0 ? nil : UInt32(s.tag) }
     @objc private func selectMode(_ s: NSMenuItem) {
         let m = InputMode.allCases[s.tag]
-        if m == .gestures, !Permissions.accessibility { Permissions.requestAccessibility() }
+        if m == .gestures { Permissions.requestAccessibilityOnce() }
         settings.mode = m
     }
     @objc private func selectLayout(_ s: NSMenuItem) { settings.midiLayout = MIDILayoutPreset.allCases[s.tag] }
@@ -586,6 +623,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
     }
 
+    /// tccutil reset ListenEvent + Accessibility für com.groovex.touchbridge, dann neu anfragen
+    @objc private func resetPermissions() {
+        NSApp.activate(ignoringOtherApps: true)
+        let a = NSAlert()
+        a.messageText = "Berechtigungen zurücksetzen?"
+        a.informativeText = "TouchBridge setzt Eingabeüberwachung und Bedienungshilfen für sich zurück (tccutil reset) und fragt danach neu. "
+            + "Erlaube TouchBridge anschließend in beiden Dialogen bzw. in den Systemeinstellungen. "
+            + "Hilft, wenn TouchBridge dort aktiviert ist, die Berechtigung aber nicht greift (veralteter Eintrag eines früheren Builds)."
+        a.addButton(withTitle: "Zurücksetzen")
+        a.addButton(withTitle: "Abbrechen")
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        for l in SystemCheck.resetPermissions() { appendLog("🔐 " + l) }
+        Permissions.forgetAsked()
+        Permissions.requestInputMonitoring()
+        Permissions.requestAccessibility()
+        hadInputMonitoring = Permissions.inputMonitoring
+        hadAccessibility = Permissions.accessibility
+        restartService()
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
+    }
+
+    @objc private func removeLegacyAgent() {
+        let log = SystemCheck.removeLegacyAgent()
+        for l in log { appendLog("🧹 " + l) }
+        restartService()
+        alert("Alter LaunchAgent", log.joined(separator: "\n"))
+    }
+
     @objc private func openHelp() {
         NSWorkspace.shared.open(URL(string: "https://github.com/thegroovex/Touchbridge#readme")!)
     }
@@ -605,10 +670,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let tb = CGDisplayBounds(service.targetDisplay)
         appendLog("Touch-Ziel: id=\(service.targetDisplay) \(Int(tb.width))×\(Int(tb.height)) @ (\(Int(tb.minX)),\(Int(tb.minY)))  Modus: \(settings.mode.title)")
-        appendLog("Bedienungshilfen: \(Permissions.accessibility)  Eingabeüberwachung: \(Permissions.inputMonitoringState)")
+        appendLog("Bedienungshilfen: \(Permissions.accessibility)  Eingabeüberwachung: \(Permissions.inputMonitoringState)  Wirkung: \(service.inputMonitoringState.statusText)")
         appendLog("— Touch-Dienst vor der Diagnose —")
         appendLog("Status: \(statusText)  Reports bisher: \(service.reportCount)")
+        appendLog(InterfaceStatus.summary(service.status.interfaces) + (service.status.seizeError.map { "  – \($0)" } ?? ""))
+        appendLog(service.suppressor.statsLine)
+        for l in service.suppressor.samples { appendLog("   " + l) }
         for l in service.openLog { appendLog(l) }
+        // ioreg-Halter, solange der Touch-Dienst die Schnittstellen noch hält (eigene doppelte Clients = Fehler)
+        for l in SystemCheck.diagnosisLines(vid: settings.vid ?? HIDProbe.anmiteVID, pid: settings.pid ?? HIDProbe.anmitePID) { appendLog(l) }
         service.stop()
         statusItem.button?.title = " REC"
 

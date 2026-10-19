@@ -26,6 +26,7 @@ let package = Package(
                 .linkedFramework("CoreMIDI"),
                 .linkedFramework("ApplicationServices"),
                 .linkedFramework("AppKit"),
+                .linkedFramework("Security"),
             ]
         ),
         // Kommandozeile (touchbridge)

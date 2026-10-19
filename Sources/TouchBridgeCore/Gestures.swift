@@ -20,12 +20,15 @@ public extension EventSink {
 public final class EventPoster: EventSink {
     public init() {}
     private let src = CGEventSource(stateID: .hidSystemState)
+    /// Eigene Events markieren, damit der Systemzeiger-Filter (Event-Tap) sie durchlässt
+    private func mark(_ e: CGEvent) { e.setIntegerValueField(.eventSourceUserData, value: SystemPointerFilter.marker) }
 
     public func move(_ p: CGPoint) { mouse(.mouseMoved, p, .left, clicks: 1) }
 
     public func mouse(_ type: CGEventType, _ p: CGPoint, _ button: CGMouseButton, clicks: Int64) {
         guard let e = CGEvent(mouseEventSource: src, mouseType: type, mouseCursorPosition: p, mouseButton: button) else { return }
         e.setIntegerValueField(.mouseEventClickState, value: clicks)
+        mark(e)
         e.post(tap: .cghidEventTap)
     }
 
@@ -47,6 +50,7 @@ public final class EventPoster: EventSink {
         if let phaseField = CGEventField(rawValue: 99) { // kCGScrollWheelEventScrollPhase
             e.setIntegerValueField(phaseField, value: phase)
         }
+        mark(e)
         e.post(tap: .cghidEventTap)
     }
 
@@ -54,6 +58,7 @@ public final class EventPoster: EventSink {
         for down in [true, false] {
             guard let e = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: down) else { continue }
             e.flags = flags
+            mark(e)
             e.post(tap: .cghidEventTap)
         }
     }

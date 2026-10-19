@@ -76,6 +76,39 @@ weitere Optionen `--base-note 36`, `--scale minor`, `--bend-range 24`.
 - Passende Layouts: `mixer` (8 Fader = Spurlautstärken, 8 Pads = Loop-Tasten) oder `performance` (XY-Feld für Effekte),
   jeweils mit `--no-mpe`.
 
+## Berechtigungen
+TouchBridge braucht **Eingabeüberwachung** (sonst liefert macOS keine Touch-Reports) und für Maus & Gesten
+**Bedienungshilfen** (Events senden, Systemzeiger-Filter). Beide Dialoge kommen nur **einmal** automatisch;
+danach zeigt das Menü nur noch einen Hinweis.
+
+- **Stabile Signatur (ab 0.3.1):** Die App ist mit dem selbstsignierten Zertifikat „TouchBridge Self-Signed (groovex)“
+  signiert, mit fester Designated Requirement
+  `identifier "com.groovex.touchbridge" and certificate leaf = H"881bb1364953182615a236964e3ae7d651efef72"`
+  (CLI: `com.groovex.touchbridge.cli`). macOS erkennt neue Versionen dadurch als dieselbe App – die Rechte bleiben über
+  Updates erhalten. Der In-App-Updater installiert nur Bundles mit demselben Leaf-Zertifikat.
+- **Umstieg von 0.3.0 oder älter (einmalig):** Diese Versionen waren ad-hoc signiert; ihre Einträge passen nicht mehr.
+  Systemeinstellungen › Datenschutz & Sicherheit › **Eingabeüberwachung** und **Bedienungshilfen**: TouchBridge mit „–“
+  entfernen, neu hinzufügen bzw. beim nächsten Dialog erlauben. Alternativ Menü › Berechtigungen ›
+  **Berechtigungen zurücksetzen …** (führt `tccutil reset ListenEvent com.groovex.touchbridge` und
+  `tccutil reset Accessibility com.groovex.touchbridge` aus und fragt neu).
+- **Wirkung statt Schalter:** Der Status richtet sich nach dem tatsächlichen Ergebnis – kommen Reports an, gilt die
+  Berechtigung als wirksam; ist sie laut System erteilt, das Öffnen scheitert aber mit `kIOReturnNotPermitted`, meldet das
+  Menü „Eintrag veraltet – in Systemeinstellungen entfernen (–) und neu hinzufügen“.
+
+### Exklusiver Zugriff und Systemzeiger
+Der Anmite meldet sich mit **drei HID-Schnittstellen** (Touch-Digitizer, Maus/Pointer, Vendor). Über die Maus-Schnittstelle
+bewegt macOS selbst den Zeiger (AppleUserHIDEventDriver → WindowServer). TouchBridge öffnet deshalb **alle** Schnittstellen
+des Monitors genau einmal (dedupliziert per IORegistryEntryID) und **exklusiv**; das Menü zeigt den Stand je Schnittstelle,
+z. B. „3 Schnittstellen: Touch exklusiv, Maus exklusiv, Vendor exklusiv“. Touch-Frames kommen nur aus der
+Digitizer-Schnittstelle, Reports der anderen werden verworfen.
+
+Lässt sich eine Schnittstelle nicht exklusiv übernehmen, nennt das Menü den Return-Code (hex) und – nur wenn wirklich
+vorhanden – einen zweiten TouchBridge-Prozess oder den alten LaunchAgent aus v0.1 (Menüpunkt „Alten LaunchAgent entfernen“).
+Dann greift **„Systemzeiger vom Touch unterdrücken (wenn nicht exklusiv)“**: ein Event-Tap verwirft die macOS-eigenen
+Maus-, Klick- und Scroll-Events dieses Geräts (Erkennung über die Absender-Registry-ID des HID-Events, sonst über
+`kCGEventSourceUnixProcessID == 0` + zeitliche Nähe zu Touch-Reports; TouchBridge markiert die eigenen Events), und
+TouchBridge setzt den Zeiger bei jedem Report absolut auf den Touch-Bildschirm. Im Terminal: `--no-suppress`.
+
 ## Updates
 TouchBridge sucht beim Start und danach alle 24 Stunden auf GitHub nach einer neueren Version
 (Menü › **Updates**: „Nach Updates suchen …“, „Automatisch prüfen“, „Vorabversionen einbeziehen“ –
@@ -96,6 +129,10 @@ alle HID-Interfaces des Monitors **nicht exklusiv** geöffnet und aufgelistet (U
 Transport, Location-ID), der Input Mode auf Multi-Touch gesetzt (Feature-Report vorher/nachher) und 10 s lang
 Rohreports und HID-Werte protokolliert – mit allen Return-Codes und den Details der DDC-Probe. Kommen keine
 Reports an, steht das ausdrücklich im Ergebnis.
+Zusätzlich: Code-Signatur der laufenden App (`codesign -dr-`, Leaf-Zertifikat), IOHIDCheckAccess/AXIsProcessTrusted,
+andere laufende TouchBridge-Prozesse, alter LaunchAgent, Zustand je Schnittstelle, Event-Tap-Statistik und die
+Halter jeder HID-Schnittstelle laut `ioreg` (Prozess-Clients mit PID, Kernel-/DriverKit-Treiber, DeviceUsagePairs,
+Built-In). Hält TouchBridge selbst ein Interface doppelt, steht das als Fehler im Ergebnis.
 
 ## Installieren
 1. Unter **Releases** `TouchBridge-<version>.dmg` laden (Apple Silicon und Intel, ab macOS 12).

@@ -8,6 +8,10 @@ name: CI
 #   test-intel   swift test on an Intel runner (x86_64 behaviour of the parser / gestures).
 #   release      on a published GitHub release: the DMG is built with the release tag as version
 #                and attached together with SHA256SUMS.txt.
+# Signing: secrets TB_SIGN_P12 (base64 .p12) + TB_SIGN_P12_PASSWORD hold the self-signed certificate
+# "TouchBridge Self-Signed (groovex)"; scripts/ci-keychain.sh imports it into a temporary keychain and
+# package.sh signs with a fixed designated requirement (identifier + certificate leaf) so macOS keeps
+# Input Monitoring / Accessibility across updates. Without the secrets (fork PRs) the app is signed ad-hoc.
 # Pull requests that only change docs/** or *.md skip the builds; the "CI result" job reports for every run.
 # On a failure the build/test log tail is written to the job summary and uploaded as artefact "ci-logs".
 
@@ -111,6 +115,12 @@ jobs:
           "$bin" --help | tee ci-logs/smoke.log
           "$bin" --list-displays | tee -a ci-logs/smoke.log
 
+      - name: Signing identity (self-signed certificate from secrets; ad-hoc without)
+        env:
+          TB_SIGN_P12: ${{ secrets.TB_SIGN_P12 }}
+          TB_SIGN_P12_PASSWORD: ${{ secrets.TB_SIGN_P12_PASSWORD }}
+        run: scripts/ci-keychain.sh
+
       - name: Package (TouchBridge.app in DMG)
         run: |
           set -o pipefail
@@ -130,6 +140,7 @@ jobs:
             lipo -info "$app/Contents/MacOS/TouchBridgeApp"
             lipo "$app/Contents/MacOS/TouchBridgeApp" -verify_arch arm64 x86_64
             codesign --verify --deep --strict --verbose=2 "$app"
+            codesign -d -r- "$app"
             help="$("$app/Contents/MacOS/touchbridge" --help)"; echo "${help%%$'\n'*}"
             # Menüleisten-App startet und läuft stabil (4 s), dann beenden
             "$app/Contents/MacOS/TouchBridgeApp" & pid=$!
@@ -145,6 +156,10 @@ jobs:
           path: |
             dist/*.dmg
             dist/SHA256SUMS.txt
+
+      - name: Remove signing keychain
+        if: always()
+        run: '[ -n "${TB_SIGN_KEYCHAIN:-}" ] && security delete-keychain "$TB_SIGN_KEYCHAIN" || true'
 
       - name: Failure report
         if: failure()
@@ -191,8 +206,16 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - name: Signing identity (self-signed certificate from secrets)
+        env:
+          TB_SIGN_P12: ${{ secrets.TB_SIGN_P12 }}
+          TB_SIGN_P12_PASSWORD: ${{ secrets.TB_SIGN_P12_PASSWORD }}
+        run: scripts/ci-keychain.sh
       - name: Build package
         run: scripts/package.sh "${GITHUB_REF_NAME#v}"
+      - name: Remove signing keychain
+        if: always()
+        run: '[ -n "${TB_SIGN_KEYCHAIN:-}" ] && security delete-keychain "$TB_SIGN_KEYCHAIN" || true'
       - name: Upload to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -29,6 +29,7 @@ func printUsage() {
       --diagnose [SEK]       alle HID-Interfaces des Touch-Monitors nicht exklusiv öffnen, Input Mode setzen,
                              Rohreports protokollieren (Standard 10 s), dann Ende
       --no-seize             Gerät nicht exklusiv öffnen
+      --no-suppress          Systemzeiger-Unterdrückung (Event-Tap, wenn nicht exklusiv) ausschalten
       --rotate 0|90|180|270  Panel-Drehung (im Uhrzeigersinn)
       --swap-xy --flip-x --flip-y   Achsen anpassen
       --invert-scroll        Scrollrichtung umkehren
@@ -59,6 +60,7 @@ while !args.isEmpty {
         diagnoseSeconds = 10
         if let n = args.first.flatMap(Double.init) { diagnoseSeconds = n; args.removeFirst() }
     case "--no-seize": settings.seize = false
+    case "--no-suppress": settings.suppressSystemPointer = false
     case "--rotate": settings.rotation = Int(next()) ?? 0
     case "--swap-xy": settings.swapXY = true
     case "--flip-x": settings.flipX = true
@@ -119,6 +121,8 @@ if checkUpdate {
 if let secs = diagnoseSeconds {
     print("Eingabeüberwachung: \(Permissions.inputMonitoringState)")
     if !Permissions.inputMonitoring { Permissions.requestInputMonitoring() }
+    for l in SystemCheck.diagnosisLines(vid: settings.vid ?? HIDProbe.anmiteVID, pid: settings.pid ?? HIDProbe.anmitePID,
+                                        bundle: URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()) { print(l) }
     let probe = HIDProbe(vid: settings.vid ?? HIDProbe.anmiteVID, pid: settings.pid ?? HIDProbe.anmitePID) { print($0) }
     probe.run(seconds: secs) { s in exit(s.interfaces == 0 ? 4 : (s.reports == 0 ? 5 : 0)) }
     RunLoop.main.run()

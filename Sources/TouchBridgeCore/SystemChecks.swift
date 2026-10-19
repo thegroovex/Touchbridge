@@ -176,6 +176,7 @@ public struct HIDHolderReport: Equatable {
         public var descendantIDs: [UInt64]
     }
     public var interfaces: [Interface] = []
+    public init() {}
 
     /// Kurzfassung der vermutlichen Halter: fremde Prozess-Clients (ohne eigenen PID) und Event-Treiber.
     public func likelyHolders(ownPID: Int32) -> [String] {

@@ -76,6 +76,27 @@ weitere Optionen `--base-note 36`, `--scale minor`, `--bend-range 24`.
 - Passende Layouts: `mixer` (8 Fader = Spurlautstärken, 8 Pads = Loop-Tasten) oder `performance` (XY-Feld für Effekte),
   jeweils mit `--no-mpe`.
 
+## Multitouch über die Pi-Brücke (Bluetooth)
+
+Direkt per USB-C am Mac liefert die Anmite-Firmware nur **Single-Touch** (sie schaltet beim Mac in den Mausmodus).
+Unter Linux liefert derselbe Controller echtes **10-Finger-Multitouch**. Die Pi-Brücke nutzt das:
+
+- **Bild:** HDMI vom Mac ans Anmite (ohne Bildsignal schaltet das Display nach 30 s ab – und damit auch der Touch).
+- **Touch:** USB-C des Anmite an einen Raspberry Pi (z. B. Pi Zero W über OTG-Adapter/Hub).
+- Der Pi meldet sich per Bluetooth als „Anmite Touch (TouchBridge)“ mit Descriptor und VID/PID des Anmite und
+  reicht die Multitouch-Reports unverändert weiter. TouchBridge erkennt ihn automatisch.
+
+Beide Wege funktionieren mit derselben App: USB direkt = Single-Touch, über den Pi = Multitouch. Einfach umstecken.
+
+Einrichtung auf dem Pi (Raspberry Pi OS Lite):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/thegroovex/Touchbridge/main/scripts/pi/install-bt-bridge.sh | sudo bash
+```
+
+Danach am Mac in den Bluetooth-Einstellungen „Anmite Touch (TouchBridge)“ verbinden. Log auf dem Pi:
+`journalctl -u touchbridge-bt -f`. Entfernen: `sudo bash install-bt-bridge.sh --uninstall`.
+
 ## Berechtigungen
 TouchBridge braucht **Eingabeüberwachung** (sonst liefert macOS keine Touch-Reports) und für Maus & Gesten
 **Gerätesteuerung und Datenzugriff** (so heißt die Seite ab macOS 27; älteres macOS: **Bedienungshilfen**) –

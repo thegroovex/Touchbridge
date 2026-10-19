@@ -596,7 +596,10 @@ public final class TouchService {
         let exclusive = d.exclusive
         d.start()
         devices.append(d)
-        if d.kind == .multitouch {
+        if d.kind == .multitouch && d.isBluetooth {
+            // Pi-Brücke: liefert echtes Multitouch, kein USB – keine Aktivierungsversuche
+            note("📶 Pi-Brücke per Bluetooth verbunden (\(d.label)) – Multitouch über den Raspberry Pi")
+        } else if d.kind == .multitouch {
             if experimentActive { onDigitizerAttached?(d) }
             else if let seq = settings.multitouchSequence { applyRemembered(seq, to: d) }
             else { startActivation(d) }
@@ -631,6 +634,11 @@ public final class TouchService {
             return false
         }
         HIDInputHub.shared.deviceRemoved(raw, registryID: rid)
+        // Multitouch-Quelle weg (z. B. Pi-Brücke getrennt, zurück an USB direkt): Absolutmaus wieder als Single-Touch nutzen
+        if multitouchReports > 0 && !devices.contains(where: { $0.kind == .multitouch && $0.reports > 0 }) {
+            multitouchReports = 0
+            note("ℹ️  Multitouch-Quelle getrennt – Single-Touch über die Maus-Schnittstelle wieder aktiv, sobald vorhanden.")
+        }
         refreshStatus()
     }
 
@@ -757,7 +765,11 @@ final class TouchDevice {
     let kind: Kind
     /// Interface liefert Touch-Frames (Multitouch oder Single-Touch-Absolutmaus)
     var isTouch: Bool { kind != .none }
-    var label: String { "\(name) [\(role.rawValue)" + (registryID.map { String(format: " 0x%llX", $0) } ?? "") + "]" }
+    var label: String { "\(name) [\(role.rawValue)" + (isBluetooth ? " BT" : "") + (registryID.map { String(format: " 0x%llX", $0) } ?? "") + "]" }
+    /// Über Bluetooth angebunden (Pi-Brücke) statt USB
+    var isBluetooth: Bool {
+        ((IOHIDDeviceGetProperty(device, kIOHIDTransportKey as CFString) as? String) ?? "").lowercased().hasPrefix("bluetooth")
+    }
     var seizeMessage: String?
     var exclusive = false
     private var observation: HIDInputHub.Observation?

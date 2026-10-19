@@ -30,10 +30,17 @@ else
 fi
 sleep 2
 
+# Auf das Gerät warten (nach dem Umstecken bzw. falls es zwischendurch weg war)
+for i in $(seq 1 30); do lsusb -d $VID:$PID >/dev/null 2>&1 && break
+  [ "$i" -eq 1 ] && echo ">>> Anmite nicht am USB – bitte Touch-USB-C (wieder) einstecken, warte bis 30 s …"; sleep 1; done
+lsusb -d $VID:$PID >/dev/null 2>&1 || echo "!!! Anmite weiterhin NICHT am USB (Strom/Kabel/OTG-Adapter?)"
+sleep 2
+
 echo; echo "== 2) Gerät & Treiber =="
+echo "--- lsusb ---"; lsusb
 lsusb -d $VID:$PID -v 2>/dev/null | grep -E 'Bus|iManufacturer|iProduct|bInterfaceNumber|bInterfaceClass|bInterfaceProtocol|wMaxPacketSize|bInterval' || lsusb | grep -i "$VID:$PID"
 echo "--- dmesg ---"
-dmesg | grep -iE "$VID|0859|wch|multitouch|hid-generic|input:.*TouchScreen" | tail -30
+dmesg | grep -iE "$VID|0859|wch|multitouch|hid-generic|input:.*TouchScreen|usb 1-|disconnect|over-current|dwc" | tail -40
 echo "--- gebundene HID-Treiber ---"
 for d in /sys/bus/hid/devices/*${VID^^}:${PID^^}*; do
   [ -e "$d" ] || continue

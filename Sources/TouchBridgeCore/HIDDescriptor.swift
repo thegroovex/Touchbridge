@@ -17,6 +17,8 @@ public struct HIDField {
     public let isVariable: Bool
     public let isConstant: Bool
     public let collectionPath: [Int] // Collection-IDs, außen -> innen
+    /// Input-Flag „Relative“ (Bit 2) – z. B. Mausrad; absolute X/Y haben es nicht
+    public var isRelative = false
 
     /// Wert in einen Report schreiben (bitOffset relativ zu `base`).
     public func write(_ value: Int64, into report: inout [UInt8], base: Int) {
@@ -128,6 +130,7 @@ public struct HIDDescriptor {
                 case 0x8: // Input
                     let isConst = (u & 0x1) != 0
                     let isVar = (u & 0x2) != 0
+                    let isRel = (u & 0x4) != 0
                     let list = resolvedUsages()
                     var off = inputOffsets[g.reportID] ?? 0
                     let lmin = g.logMin
@@ -138,7 +141,7 @@ public struct HIDDescriptor {
                                                usagePage: usage >> 16, usage: usage & 0xFFFF,
                                                logicalMin: lmin, logicalMax: lmax,
                                                isVariable: isVar, isConstant: isConst,
-                                               collectionPath: collStack))
+                                               collectionPath: collStack, isRelative: isRel))
                         off += g.reportSize
                     }
                     inputOffsets[g.reportID] = off
@@ -203,7 +206,7 @@ public extension HIDDescriptor {
     /// (Digitizer-Page 0x52; 0 = Maus, 1 = Single-Input, 2 = Multi-Input/Multi-Touch).
     /// Device Index (0x53) und alle übrigen Felder des Reports werden 0. Bytes beginnen mit der Report-ID,
     /// wenn der Descriptor Report-IDs benutzt (so erwartet es IOHIDDeviceSetReport).
-    func inputModeReport(mode: Int64 = 2) -> (reportID: UInt8, bytes: [UInt8])? {
+    func inputModeReport(mode: Int64 = 2, clamp: Bool = true) -> (reportID: UInt8, bytes: [UInt8])? {
         guard let f = featureFields.first(where: {
             $0.usagePage == Usage.pageDigitizer && $0.usage == Usage.inputMode && !$0.isConstant
         }) else { return nil }
@@ -211,8 +214,35 @@ public extension HIDDescriptor {
         let base = usesReportIDs ? 1 : 0
         var bytes = [UInt8](repeating: 0, count: base + (bits + 7) / 8)
         if usesReportIDs { bytes[0] = f.reportID }
-        f.write(max(f.logicalMin, min(f.logicalMax, mode)), into: &bytes, base: base)
+        f.write(clamp ? max(f.logicalMin, min(f.logicalMax, mode)) : mode, into: &bytes, base: base)
         return (f.reportID, bytes)
+    }
+
+    /// Länge eines Feature-Reports in Bytes INKLUSIVE Report-ID-Byte (so groß muss der GetReport-Puffer sein).
+    func featureReportLength(_ reportID: UInt8) -> Int {
+        let bits = featureReportBits[reportID] ?? 0
+        return (usesReportIDs ? 1 : 0) + max(1, (bits + 7) / 8)
+    }
+
+    /// Versuche, den Controller in den Multitouch-Modus zu schalten – nacheinander, jeweils mit Prüfung,
+    /// ob danach Touch-Reports auf dem Digitizer-Interface kommen.
+    /// 1. GetReport Contact Count Maximum, dann SetReport Input Mode 2 (Reihenfolge wie Linux hid-multitouch)
+    /// 2. dieselben Daten ohne Report-ID-Byte
+    /// 3. Input Mode 3 (manche Controller nutzen 3 für Multitouch)
+    func multitouchActivationPlan() -> [MultitouchActivationStep] {
+        guard let im = inputModeReport(mode: 2) else { return [] }
+        var steps: [MultitouchActivationStep] = []
+        let reads = contactCountMaximumField.map { [$0.reportID] } ?? []
+        steps.append(MultitouchActivationStep(name: "GetReport Max-Kontakte, dann Input Mode 2", readFirst: reads,
+                                              reportID: im.reportID, bytes: im.bytes))
+        if usesReportIDs, im.bytes.count > 1 {
+            steps.append(MultitouchActivationStep(name: "Input Mode 2 ohne Report-ID-Byte", readFirst: [],
+                                                  reportID: im.reportID, bytes: Array(im.bytes.dropFirst())))
+        }
+        if let m3 = inputModeReport(mode: 3, clamp: false) {
+            steps.append(MultitouchActivationStep(name: "Input Mode 3", readFirst: [], reportID: m3.reportID, bytes: m3.bytes))
+        }
+        return steps
     }
 
     /// Feature „Contact Count Maximum“ (0x55), falls vorhanden – nur zur Diagnose.
@@ -221,11 +251,23 @@ public extension HIDDescriptor {
     }
 }
 
+/// Ein Versuch, den Multitouch-Modus einzuschalten (SetReport Feature).
+public struct MultitouchActivationStep: Equatable {
+    public let name: String
+    /// Feature-Reports, die vorher gelesen werden (GetReport)
+    public let readFirst: [UInt8]
+    public let reportID: UInt8
+    /// Daten für IOHIDDeviceSetReport (mit oder ohne Report-ID-Byte, je nach Variante)
+    public let bytes: [UInt8]
+    public var hex: String { bytes.map { String(format: "%02X", $0) }.joined(separator: " ") }
+}
+
 // MARK: - Touch layout (Finger-Slots pro Report)
 
 public enum Usage {
     public static let pageGenericDesktop: UInt32 = 0x01
     public static let pageDigitizer: UInt32 = 0x0D
+    public static let pageButton: UInt32 = 0x09
     public static let x: UInt32 = 0x30
     public static let y: UInt32 = 0x31
     public static let touchScreen: UInt32 = 0x04
@@ -259,6 +301,27 @@ public struct TouchLayout {
     public let reportID: UInt8
     public var fingers: [FingerSlot]
     public var contactCount: HIDField?
+    /// Single-Touch-Fallback aus einer Absolutmaus (Buttons + absolute X/Y), kein echter Multitouch-Report
+    public var isPointer = false
+
+    /// Absolutmaus / Single-Touch-Digitizer: X und Y absolut (ohne Relative-Flag) plus Button 1 oder Tip Switch
+    /// als Berührung. Liefert einen Slot pro Report-ID (Kontakt-ID 0).
+    public static func absolutePointer(from d: HIDDescriptor) -> [UInt8: TouchLayout] {
+        var result: [UInt8: TouchLayout] = [:]
+        let ids = Set(d.fields.map(\.reportID))
+        for rid in ids.sorted() {
+            let fs = d.fields.filter { $0.reportID == rid && !$0.isConstant && $0.isVariable }
+            func absField(_ u: UInt32) -> HIDField? {
+                fs.first { $0.usagePage == Usage.pageGenericDesktop && $0.usage == u && !$0.isRelative && $0.logicalMax > $0.logicalMin }
+            }
+            guard let x = absField(Usage.x), let y = absField(Usage.y) else { continue }
+            let tip = fs.first { $0.usagePage == Usage.pageButton && $0.usage == 1 }
+                ?? fs.first { $0.usagePage == Usage.pageDigitizer && $0.usage == Usage.tipSwitch }
+            guard let t = tip else { continue }
+            result[rid] = TouchLayout(reportID: rid, fingers: [FingerSlot(tip: t, x: x, y: y)], contactCount: nil, isPointer: true)
+        }
+        return result
+    }
 
     public static func build(from d: HIDDescriptor) -> [UInt8: TouchLayout] {
         let colls = d.collections
@@ -324,12 +387,16 @@ public struct RawContact: Equatable {
 public struct TouchFrameAssembler {
     public let layouts: [UInt8: TouchLayout]
     public let usesReportIDs: Bool
+    /// Single-Touch über eine Absolutmaus-Schnittstelle (Gerät im Mausmodus)
+    public var isPointer: Bool { layouts.values.contains { $0.isPointer } }
     private var frame: [Int: RawContact] = [:]
     private var expected = 0
     private var collected = 0
 
-    public init(descriptor: HIDDescriptor) {
-        layouts = TouchLayout.build(from: descriptor)
+    /// pointerFallback: ohne Multitouch-Finger im Descriptor eine Absolutmaus als Single-Touch-Quelle nutzen
+    public init(descriptor: HIDDescriptor, pointerFallback: Bool = false) {
+        let mt = TouchLayout.build(from: descriptor)
+        layouts = (mt.isEmpty && pointerFallback) ? TouchLayout.absolutePointer(from: descriptor) : mt
         usesReportIDs = descriptor.usesReportIDs
     }
 

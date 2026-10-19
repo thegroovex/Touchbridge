@@ -110,9 +110,12 @@ public enum InputMonitoringState: Equatable {
 
 public enum PermissionTexts {
     public static let staleHint = "Eintrag veraltet – in Systemeinstellungen entfernen (–) und neu hinzufügen"
+    /// Name der Privacy-Seite: ab macOS 27 „Gerätesteuerung und Datenzugriff“, vorher „Bedienungshilfen“
+    public static let accessibilityName = "Gerätesteuerung und Datenzugriff (Bedienungshilfen)"
+    public static let accessibilityPath = "Systemeinstellungen › Datenschutz & Sicherheit › Gerätesteuerung und Datenzugriff (älteres macOS: Bedienungshilfen)"
     public static func accessibility(trusted: Bool, asked: Bool) -> String? {
         if trusted { return nil }
-        return asked ? "Bedienungshilfen fehlen – falls schon aktiviert: " + staleHint : "Bedienungshilfen noch nicht erlaubt"
+        return asked ? "\(accessibilityName) fehlt – falls schon aktiviert: " + staleHint : "\(accessibilityName) noch nicht erlaubt"
     }
 }
 
@@ -320,6 +323,35 @@ public struct InterfaceStatus: Equatable {
         let parts = sorted.map { "\($0.role.rawValue) " + ($0.exclusive ? "exklusiv" : "NICHT exklusiv") }
         return "\(list.count) Schnittstelle\(list.count == 1 ? "" : "n"): " + parts.joined(separator: ", ")
     }
+
+    /// „Touch: 0 Reports, Maus: 120 Reports“ – welche Schnittstelle tatsächlich Daten liefert
+    public static func reportSummary(_ list: [(role: InterfaceRole, reports: Int)]) -> String {
+        guard !list.isEmpty else { return "keine Schnittstelle offen" }
+        let order: [InterfaceRole] = [.touch, .mouse, .keyboard, .vendor, .other]
+        var sums: [InterfaceRole: Int] = [:]
+        for e in list { sums[e.role, default: 0] += e.reports }
+        return order.compactMap { r in sums[r].map { "\(r.rawValue): \($0) Report\($0 == 1 ? "" : "s")" } }.joined(separator: ", ")
+    }
+}
+
+/// Woher die Touch-Daten kommen
+public enum TouchSource: Equatable {
+    case none, multitouch, singleTouchPointer
+    public var title: String {
+        switch self {
+        case .none: return "noch keine Touch-Daten"
+        case .multitouch: return "Multitouch"
+        case .singleTouchPointer: return "Single-Touch (Gerät im Mausmodus)"
+        }
+    }
+
+    /// Multitouch, sobald der Digitizer Reports liefert; sonst Single-Touch, wenn eine Absolutmaus-Schnittstelle da ist.
+    public static func evaluate(multitouchReports: Int, pointerInterfaces: Int, multitouchInterfaces: Int) -> TouchSource {
+        if multitouchReports > 0 { return .multitouch }
+        if pointerInterfaces > 0 { return .singleTouchPointer }
+        return multitouchInterfaces > 0 ? .multitouch : .none
+    }
+}
 }
 
 /// Open-Zustand je IORegistryEntryID im ganzen Prozess. Verhindert doppelte IOHIDDeviceOpen-Aufrufe

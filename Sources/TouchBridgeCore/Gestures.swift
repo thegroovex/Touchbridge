@@ -82,6 +82,8 @@ public struct GestureConfig {
     public var swipeDistance: CGFloat = 90
     public var invertScroll = false
     public var scrollGain: CGFloat = 1.0
+    /// 1-Finger-Ziehen scrollt statt zu ziehen (Zeiger/Drag)
+    public var oneFingerScroll = false
 }
 
 public final class GestureEngine {
@@ -154,13 +156,7 @@ public final class GestureEngine {
             let d = hypot(touches[0].x - touches[1].x, touches[0].y - touches[1].y)
             switch mode {
             case .scrolling:
-                remX += (c.x - lastC.x) * cfg.scrollGain
-                remY += (c.y - lastC.y) * cfg.scrollGain
-                let ix = Int32(remX.rounded(.towardZero)), iy = Int32(remY.rounded(.towardZero))
-                remX -= CGFloat(ix); remY -= CGFloat(iy)
-                let sign: Int32 = cfg.invertScroll ? -1 : 1
-                if ix != 0 || iy != 0 { poster.scroll(dx: ix * sign, dy: iy * sign, phase: 2) }
-                lastC = c
+                scrollTo(c)
             case .pinching:
                 if pinchRef > 0 {
                     let r = d / pinchRef
@@ -190,12 +186,30 @@ public final class GestureEngine {
             poster.move(p)
         case .oneFinger:
             if hypot(p.x - startPoint.x, p.y - startPoint.y) > cfg.tapSlop {
-                poster.mouse(.leftMouseDown, startPoint, .left)
-                poster.mouse(.leftMouseDragged, p, .left)
-                mode = .dragging
+                if cfg.oneFingerScroll {
+                    mode = .scrolling; lastC = startPoint; remX = 0; remY = 0
+                    poster.scroll(dx: 0, dy: 0, phase: 1)
+                    scrollTo(p)
+                } else {
+                    poster.mouse(.leftMouseDown, startPoint, .left)
+                    poster.mouse(.leftMouseDragged, p, .left)
+                    mode = .dragging
+                }
             }
+        case .scrolling:
+            scrollTo(p)
         default: break
         }
+    }
+
+    private func scrollTo(_ c: CGPoint) {
+        remX += (c.x - lastC.x) * cfg.scrollGain
+        remY += (c.y - lastC.y) * cfg.scrollGain
+        let ix = Int32(remX.rounded(.towardZero)), iy = Int32(remY.rounded(.towardZero))
+        remX -= CGFloat(ix); remY -= CGFloat(iy)
+        let sign: Int32 = cfg.invertScroll ? -1 : 1
+        if ix != 0 || iy != 0 { poster.scroll(dx: ix * sign, dy: iy * sign, phase: 2) }
+        lastC = c
     }
 
     /// Wird regelmäßig aufgerufen (Long-Press-Erkennung)

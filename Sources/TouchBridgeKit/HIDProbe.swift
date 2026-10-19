@@ -44,13 +44,34 @@ public enum HIDReturn {
 // MARK: - Feature-Reports
 
 public enum HIDFeature {
-    /// GetReport(Feature) – liefert Return-Code und gelesene Bytes.
+    /// GetReport(Feature) – liefert Return-Code und gelesene Bytes (genau `len` Bytes, wie von IOKit gemeldet).
+    /// `size` = Feature-Report-Länge INKLUSIVE Report-ID-Byte laut Descriptor (Anmite 0x21: 3, 0x0A: 2).
+    /// Ein zu großer Puffer lieferte am Anmite unsinnige Daten ([A1 01 21 03 …] statt [21 mode idx]).
     public static func get(_ device: IOHIDDevice, reportID: UInt8, size: Int) -> (rc: IOReturn, bytes: [UInt8]) {
-        var buf = [UInt8](repeating: 0, count: max(2, size))
+        var buf = [UInt8](repeating: 0, count: max(1, size))
         buf[0] = reportID
         var len = CFIndex(buf.count)
         let rc = IOHIDDeviceGetReport(device, kIOHIDReportTypeFeature, CFIndex(reportID), &buf, &len)
         return (rc, rc == kIOReturnSuccess ? Array(buf.prefix(max(0, min(buf.count, Int(len))))) : [])
+    }
+
+    /// GetReport mit Descriptor-Länge, als Logzeile
+    public static func describeGet(_ device: IOHIDDevice, descriptor d: HIDDescriptor, reportID: UInt8, what: String) -> String {
+        let size = d.featureReportLength(reportID)
+        let a = get(device, reportID: reportID, size: size)
+        return String(format: "   GetReport Feature 0x%02X %@ (Puffer %d): ", reportID, what, size) + HIDReturn.describe(a.rc)
+            + (a.bytes.isEmpty ? "" : " [\(hex(a.bytes))] (\(a.bytes.count) Bytes)")
+    }
+
+    /// Einen Multitouch-Aktivierungsversuch ausführen (GetReports vorher, SetReport, Input Mode nachher lesen).
+    @discardableResult
+    public static func apply(_ step: MultitouchActivationStep, device: IOHIDDevice, descriptor d: HIDDescriptor,
+                             log: (String) -> Void) -> IOReturn {
+        for r in step.readFirst { log(describeGet(device, descriptor: d, reportID: r, what: "vorher")) }
+        let rc = set(device, reportID: step.reportID, bytes: step.bytes)
+        log(String(format: "   SetReport Feature 0x%02X [%@]: ", step.reportID, step.hex) + HIDReturn.describe(rc))
+        log(describeGet(device, descriptor: d, reportID: step.reportID, what: "nachher"))
+        return rc
     }
 
     public static func set(_ device: IOHIDDevice, reportID: UInt8, bytes: [UInt8]) -> IOReturn {
@@ -67,17 +88,11 @@ public enum HIDFeature {
             log("   Input Mode: kein Feature 0x0D/0x52 im Descriptor – nichts zu setzen")
             return nil
         }
-        let size = max(im.bytes.count, 8)
         let ccm = d.contactCountMaximumField?.reportID
         func dumpFeatures(_ when: String) {
-            let a = get(device, reportID: im.reportID, size: size)
-            log(String(format: "   GetReport Feature 0x%02X (%@): ", im.reportID, when) + HIDReturn.describe(a.rc)
-                + (a.bytes.isEmpty ? "" : " [\(hex(a.bytes))]"))
-            if let c = ccm {
-                let b = get(device, reportID: c, size: 8)
-                log(String(format: "   GetReport Feature 0x%02X Contact Count Max (%@): ", c, when) + HIDReturn.describe(b.rc)
-                    + (b.bytes.isEmpty ? "" : " [\(hex(b.bytes))]"))
-            }
+            // Contact Count Maximum zuerst lesen (Reihenfolge wie Linux hid-multitouch)
+            if let c = ccm { log(describeGet(device, descriptor: d, reportID: c, what: "Contact Count Max (\(when))")) }
+            log(describeGet(device, descriptor: d, reportID: im.reportID, what: "Input Mode (\(when))"))
         }
         dumpFeatures("vorher")
         let rc = set(device, reportID: im.reportID, bytes: im.bytes)
@@ -105,8 +120,6 @@ public final class HIDProbe {
     final class Interface {
         let index: Int
         let device: IOHIDDevice
-        let buffer: UnsafeMutablePointer<UInt8>
-        let size: Int
         var count = 0
         var logged = 0
         var frames = 0
@@ -115,12 +128,13 @@ public final class HIDProbe {
         var assembler: TouchFrameAssembler?
         var openRC: IOReturn = kIOReturnSuccess
         var inputModeRC: IOReturn?
+        /// vom Touch-Dienst bereits geöffnet – Diagnose hängt sich nur als Beobachter an
+        var sharedWithService = false
+        var observation: HIDInputHub.Observation?
         weak var probe: HIDProbe?
-        init(index: Int, device: IOHIDDevice, size: Int) {
-            self.index = index; self.device = device; self.size = size
-            buffer = .allocate(capacity: size)
+        init(index: Int, device: IOHIDDevice) {
+            self.index = index; self.device = device
         }
-        deinit { buffer.deallocate() }
     }
 
     public let vid: Int?
@@ -174,9 +188,6 @@ public final class HIDProbe {
             return seen.insert(id).inserted
         }.map { $0.device }
         for (i, d) in devs.enumerated() {
-            if HIDOpenRegistry.shared.isOpen(d) {
-                log("   ❌ [IF \(i)] ist bereits geöffnet (Touch-Dienst läuft noch?) – wird für die Diagnose geschlossen und neu geöffnet")
-            }
             let maxIn = Self.prop(d, kIOHIDMaxInputReportSizeKey) as? Int ?? 0
             let maxFeat = Self.prop(d, kIOHIDMaxFeatureReportSizeKey) as? Int ?? 0
             let loc = Self.prop(d, kIOHIDLocationIDKey) as? Int ?? 0
@@ -193,37 +204,47 @@ public final class HIDProbe {
                        maxIn, maxFeat, (Self.prop(d, kIOHIDTransportKey) as? String ?? "?"), loc,
                        HIDOpenRegistry.registryID(d) ?? 0))
 
-            let iface = Interface(index: i, device: d, size: max(maxIn, 256))
+            let iface = Interface(index: i, device: d)
             iface.probe = self
-            iface.openRC = HIDOpenRegistry.shared.open(d, seize: false)
-            log("   IOHIDDeviceOpen (ohne Seize): " + HIDReturn.describe(iface.openRC))
+            if HIDOpenRegistry.shared.isOpen(d) {
+                // Touch-Dienst hält das Interface: nicht neu öffnen, nur zusätzlich beobachten
+                iface.sharedWithService = true
+                iface.openRC = kIOReturnSuccess
+                log("   bereits vom Touch-Dienst geöffnet (" + (HIDOpenRegistry.shared.tracker.isExclusive(HIDOpenRegistry.registryID(d) ?? 0) ? "exklusiv" : "nicht exklusiv")
+                    + ") – Diagnose beobachtet mit")
+            } else {
+                iface.openRC = HIDOpenRegistry.shared.open(d, seize: false)
+                log("   IOHIDDeviceOpen (ohne Seize): " + HIDReturn.describe(iface.openRC))
+            }
 
             if let data = Self.prop(d, kIOHIDReportDescriptorKey) as? Data {
                 let desc = HIDDescriptor(bytes: [UInt8](data))
                 log("   Descriptor \(data.count) Bytes: " + HIDFeature.hex([UInt8](data)))
-                let asm = TouchFrameAssembler(descriptor: desc)
+                let asm = TouchFrameAssembler(descriptor: desc, pointerFallback: true)
                 for (rid, l) in asm.layouts.sorted(by: { $0.key < $1.key }) {
-                    log("   Touch-Report \(rid): \(l.fingers.count) Finger-Slots, Contact Count: \(l.contactCount != nil ? "ja" : "nein")")
+                    log(l.isPointer ? "   Report \(rid): Absolutmaus (X/Y absolut, Button 1) – Single-Touch-Quelle"
+                        : "   Touch-Report \(rid): \(l.fingers.count) Finger-Slots, Contact Count: \(l.contactCount != nil ? "ja" : "nein")")
                 }
                 if !asm.layouts.isEmpty { iface.assembler = asm }
-                iface.inputModeRC = HIDFeature.applyInputMode(d, descriptor: desc, name: "IF \(i)") { [weak self] in self?.log($0) }
+                if iface.sharedWithService {
+                    // Input Mode steuert der Touch-Dienst (Multitouch-Versuche); hier nur lesen
+                    if let im = desc.inputModeReport() {
+                        log(HIDFeature.describeGet(d, descriptor: desc, reportID: im.reportID, what: "Input Mode"))
+                    }
+                } else {
+                    iface.inputModeRC = HIDFeature.applyInputMode(d, descriptor: desc, name: "IF \(i)") { [weak self] in self?.log($0) }
+                }
             } else {
                 log("   (kein Report-Descriptor lesbar)")
             }
 
-            IOHIDDeviceScheduleWithRunLoop(d, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
-            let ctx = Unmanaged.passUnretained(iface).toOpaque()
-            IOHIDDeviceRegisterInputReportCallback(d, iface.buffer, iface.size, { ctx, result, _, _, rid, report, length in
-                guard let ctx = ctx else { return }
-                let f = Unmanaged<Interface>.fromOpaque(ctx).takeUnretainedValue()
-                f.probe?.received(f, result: result, reportID: rid, UnsafeBufferPointer(start: report, count: length))
-            }, ctx)
-            // Zusätzlich Werte-Callback (falls Reports nicht als Ganzes ankommen)
-            IOHIDDeviceRegisterInputValueCallback(d, { ctx, _, _, value in
-                guard let ctx = ctx else { return }
-                let f = Unmanaged<Interface>.fromOpaque(ctx).takeUnretainedValue()
-                f.probe?.receivedValue(f, value)
-            }, ctx)
+            // Reports + Werte über den prozessweiten Hub (eine IOKit-Registrierung je Gerät, gemeinsam mit dem Touch-Dienst)
+            iface.observation = HIDInputHub.shared.observe(d, owner: iface, values: true) { f, event in
+                switch event {
+                case let .report(rid, bytes, result): f.probe?.received(f, result: result, reportID: rid, bytes)
+                case let .value(v): f.probe?.receivedValue(f, v)
+                }
+            }
             interfaces.append(iface)
         }
         log("Warte \(Int(seconds)) s auf Reports – bitte den Bildschirm mit mehreren Fingern berühren …")
@@ -291,15 +312,12 @@ public final class HIDProbe {
 
     public func close() {
         for f in interfaces {
-            IOHIDDeviceRegisterInputReportCallback(f.device, f.buffer, f.size, nil, nil)
-            IOHIDDeviceRegisterInputValueCallback(f.device, nil, nil)
-            IOHIDDeviceUnscheduleFromRunLoop(f.device, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
-            if f.openRC == kIOReturnSuccess { HIDOpenRegistry.shared.close(f.device) }
+            f.observation?.cancel()
+            f.observation = nil
+            // nur schließen, was die Diagnose selbst geöffnet hat
+            if f.openRC == kIOReturnSuccess && !f.sharedWithService { HIDOpenRegistry.shared.close(f.device) }
         }
         manager = nil
-        // Interfaces erst nach dem Runloop-Durchlauf freigeben (Callbacks sind abgemeldet)
-        let keep = interfaces
         interfaces = []
-        DispatchQueue.main.async { _ = keep }
     }
 }

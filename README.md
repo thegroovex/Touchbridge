@@ -78,7 +78,8 @@ weitere Optionen `--base-note 36`, `--scale minor`, `--bend-range 24`.
 
 ## Berechtigungen
 TouchBridge braucht **Eingabeüberwachung** (sonst liefert macOS keine Touch-Reports) und für Maus & Gesten
-**Bedienungshilfen** (Events senden, Systemzeiger-Filter). Beide Dialoge kommen nur **einmal** automatisch;
+**Gerätesteuerung und Datenzugriff** (so heißt die Seite ab macOS 27; älteres macOS: **Bedienungshilfen**) –
+Events senden, Systemzeiger-Filter. Beide Dialoge kommen nur **einmal** automatisch;
 danach zeigt das Menü nur noch einen Hinweis.
 
 - **Stabile Signatur:** Sind die Signier-Secrets gesetzt (siehe unten), signiert die CI mit dem selbstsignierten
@@ -90,7 +91,7 @@ danach zeigt das Menü nur noch einen Hinweis.
 - **Nach einem Update auf einen ad-hoc-Build bzw. beim Umstieg auf den ersten signierten Build (einmalig):**
   `tccutil reset ListenEvent com.groovex.touchbridge; tccutil reset Accessibility com.groovex.touchbridge`, dann
   TouchBridge starten und beide Rechte erlauben – oder in Systemeinstellungen › Datenschutz & Sicherheit ›
-  **Eingabeüberwachung** / **Bedienungshilfen** TouchBridge mit „–“ entfernen und neu hinzufügen. Dasselbe macht
+  **Eingabeüberwachung** / **Gerätesteuerung und Datenzugriff** (Bedienungshilfen) TouchBridge mit „–“ entfernen und neu hinzufügen. Dasselbe macht
   Menü › Berechtigungen › **Berechtigungen zurücksetzen …**.
 - **Wirkung statt Schalter:** Der Status richtet sich nach dem tatsächlichen Ergebnis – kommen Reports an, gilt die
   Berechtigung als wirksam; ist sie laut System erteilt, das Öffnen scheitert aber mit `kIOReturnNotPermitted`, meldet das
@@ -106,8 +107,26 @@ packt es mit Zufallspasswort als .p12 und speichert es per GitHub CLI als Action
 Der Anmite meldet sich mit **drei HID-Schnittstellen** (Touch-Digitizer, Maus/Pointer, Vendor). Über die Maus-Schnittstelle
 bewegt macOS selbst den Zeiger (AppleUserHIDEventDriver → WindowServer). TouchBridge öffnet deshalb **alle** Schnittstellen
 des Monitors genau einmal (dedupliziert per IORegistryEntryID) und **exklusiv**; das Menü zeigt den Stand je Schnittstelle,
-z. B. „3 Schnittstellen: Touch exklusiv, Maus exklusiv, Vendor exklusiv“. Touch-Frames kommen nur aus der
-Digitizer-Schnittstelle, Reports der anderen werden verworfen.
+z. B. „3 Schnittstellen: Touch exklusiv, Maus exklusiv, Vendor exklusiv“, dazu, welche Schnittstelle tatsächlich
+Daten liefert („Reports: Touch: 0 Reports, Maus: 120 Reports, Vendor: 0 Reports“) und die Quelle.
+
+### Multitouch oder Single-Touch (Gerät im Mausmodus)
+Jede Schnittstelle, deren Report-Descriptor Finger beschreibt, ist Multitouch-Quelle. Eine Schnittstelle mit
+**absoluten** X/Y (ohne Relative-Flag) und Button 1 bzw. Tip Switch – z. B. die Maus-Schnittstelle des Anmite
+(Report 7: 3 Buttons, X 0…16383, Y 0…9599, Rad) – dient als **Single-Touch-Fallback**: Button 1 = Berührung,
+Koordinaten absolut auf den Touch-Bildschirm. Tippen = Klick, Ziehen = Drag, Halten = Rechtsklick; mit
+„1-Finger-Ziehen scrollt“ (Terminal: `--one-finger-scroll`) wird aus dem Ziehen Scrollen.
+
+Der Anmite sendet am Mac zunächst nur auf der Maus-Schnittstelle (wie Windows vor dem Input-Mode-Wechsel). Beim Öffnen
+versucht TouchBridge automatisch, Multitouch einzuschalten, und prüft nach jedem Versuch während einer Berührung 2 s
+lang, ob Multitouch-Reports kommen: (1) GetReport „Contact Count Maximum“, dann SetReport Input Mode 2 `[21 02 00]`
+(Reihenfolge wie Linux hid-multitouch), (2) dieselben Daten ohne Report-ID `[02 00]`, (3) Input Mode 3 `[21 03 00]`.
+Klappt ein Versuch, läuft der Multitouch-Pfad und die Maus-Schnittstelle wird nur noch exklusiv gehalten und verworfen;
+sonst bleibt es bei Single-Touch und das Menü zeigt „Single-Touch (Gerät im Mausmodus)“. Alle Versuche stehen mit
+Return-Codes und Feature-Inhalten in der Diagnose.
+
+**Exklusiv nur Touch-Schnittstelle** (Menü, Terminal `--seize-touch-only`) ist eine Testoption: nur der Digitizer wird
+exklusiv übernommen, Maus/Vendor nicht.
 
 Lässt sich eine Schnittstelle nicht exklusiv übernehmen, nennt das Menü den Return-Code (hex) und – nur wenn wirklich
 vorhanden – einen zweiten TouchBridge-Prozess oder den alten LaunchAgent aus v0.1 (Menüpunkt „Alten LaunchAgent entfernen“).
@@ -131,8 +150,9 @@ die App (bei fehlenden Schreibrechten nach Rückfrage mit Administrator-Passwort
 Im Terminal: `touchbridge --check-update`.
 
 ## Diagnose
-Menü › **Diagnose aufzeichnen** (oder `touchbridge --diagnose`): Der Touch-Dienst gibt das Gerät frei, dann werden
-alle HID-Interfaces des Monitors **nicht exklusiv** geöffnet und aufgelistet (Usage-Paare, Report-Größen,
+Menü › **Diagnose aufzeichnen** (oder `touchbridge --diagnose`): Der Touch-Dienst läuft weiter, sendet während der
+Messung aber keine Events; Schnittstellen, die er schon hält, beobachtet die Diagnose nur mit (kein zweites Öffnen,
+keine zweite Callback-Registrierung). Alle übrigen HID-Interfaces des Monitors werden **nicht exklusiv** geöffnet und aufgelistet (Usage-Paare, Report-Größen,
 Transport, Location-ID), der Input Mode auf Multi-Touch gesetzt (Feature-Report vorher/nachher) und 10 s lang
 Rohreports und HID-Werte protokolliert – mit allen Return-Codes und den Details der DDC-Probe. Kommen keine
 Reports an, steht das ausdrücklich im Ergebnis.
@@ -146,7 +166,7 @@ Built-In). Hält TouchBridge selbst ein Interface doppelt, steht das als Fehler 
 2. DMG öffnen, **TouchBridge** auf „Programme“ ziehen.
 3. Erster Start: Rechtsklick auf TouchBridge › **Öffnen** (die App ist nicht von Apple notarisiert),
    alternativ Systemeinstellungen › Datenschutz & Sicherheit › „Trotzdem öffnen“.
-4. **Bedienungshilfen** und **Eingabeüberwachung** für TouchBridge erlauben.
+4. **Gerätesteuerung und Datenzugriff** (älteres macOS: **Bedienungshilfen**) und **Eingabeüberwachung** für TouchBridge erlauben.
 
 Danach sitzt ein Hand-Symbol in der Menüleiste.
 
@@ -156,7 +176,8 @@ Danach sitzt ein Hand-Symbol in der Menüleiste.
   Pitch-Bend-Bereich, Overlay an/aus
 - **Bild**: Helligkeit, Kontrast, Lautstärke per DDC/CI (Apple-Silicon-Macs, wenn der Monitor DDC kann),
   dazu Software-Abdunkeln für jeden Bildschirm
-- **Touch**: Ziel-Bildschirm, Ausrichtung (0/90/180/270°, spiegeln), Scrollrichtung und -tempo, exklusiver Modus
+- **Touch**: Ziel-Bildschirm, Ausrichtung (0/90/180/270°, spiegeln), Scrollrichtung und -tempo, 1-Finger-Ziehen scrollt,
+  exklusiver Modus, „Exklusiv nur Touch-Schnittstelle“ (Test)
 - **Beim Anmelden starten** (ab macOS 13), Berechtigungen prüfen
 - **Diagnose aufzeichnen**: 10 s Touch-Rohdaten, landen in der Zwischenablage und als
   `TouchBridge-Diagnose.txt` auf dem Schreibtisch

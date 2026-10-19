@@ -3,7 +3,7 @@ import Foundation
 import TouchBridgeCore
 
 /// Fallback, wenn eine Schnittstelle des Touch-Monitors nicht exklusiv übernommen werden kann:
-/// Ein aktiver CGEventTap (HID-Ebene, braucht Bedienungshilfen) verwirft die Maus-/Klick-/Scroll-Events,
+/// Ein aktiver CGEventTap (HID-Ebene, braucht Gerätesteuerung und Datenzugriff bzw. Bedienungshilfen) verwirft die Maus-/Klick-/Scroll-Events,
 /// die macOS selbst aus dem Gerät erzeugt. Erkennung:
 ///  1. Absender-Registry-ID des zugrunde liegenden IOHIDEvent (private CGEventCopyIOHIDEvent + IOHIDEventGetSenderID,
 ///     per dlsym – fehlt eins davon, entfällt dieser Weg),
@@ -73,7 +73,7 @@ public final class PointerSuppressor {
             let me = Unmanaged<PointerSuppressor>.fromOpaque(ctx).takeUnretainedValue()
             return me.handle(type, event)
         }, userInfo: ctx) else {
-            log("⚠️  Systemzeiger-Unterdrückung: Event-Tap nicht erlaubt (Bedienungshilfen für TouchBridge erlauben).")
+            log("⚠️  Systemzeiger-Unterdrückung: Event-Tap nicht erlaubt (\(PermissionTexts.accessibilityName) für TouchBridge erlauben).")
             return false
         }
         tap = t

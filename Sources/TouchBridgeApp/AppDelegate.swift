@@ -75,7 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let ax = Permissions.accessibility
             if ax != self.hadAccessibility {
                 self.hadAccessibility = ax
-                self.appendLog("🔐 Bedienungshilfen jetzt: \(ax ? "erteilt" : "fehlt")")
+                self.appendLog("🔐 \(PermissionTexts.accessibilityName) jetzt: \(ax ? "erteilt" : "fehlt")")
                 self.updateIcon()
             }
         }
@@ -283,6 +283,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let e = st.lastError { return e }
         if st.devices.isEmpty { return "Touch-Monitor nicht angeschlossen" }
         return st.devices.joined(separator: ", ") + (st.exclusive ? " – exklusiv" : " – nicht exklusiv")
+            + (st.source == .singleTouchPointer ? " – " + st.source.title : "")
             + (settings.mode == .midi ? " – MIDI" : "")
     }
 
@@ -355,6 +356,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if settings.enabled, !service.status.interfaces.isEmpty {
             menu.addItem(warning(InterfaceStatus.summary(service.status.interfaces), color: .secondaryLabelColor))
+            menu.addItem(warning("Reports: " + service.reportSummary, color: .secondaryLabelColor))
+            menu.addItem(warning("Quelle: " + service.touchSource.title, color: .secondaryLabelColor))
         }
         if settings.enabled, let e = service.status.seizeError, !service.status.interfaces.isEmpty {
             menu.addItem(warning("⚠️ Nicht exklusiv – \(e) – neuer Versuch alle 2 s", color: .systemOrange))
@@ -418,7 +421,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(submenu("Bildschirm", displayMenu()))
         menu.addItem(submenu("Ausrichtung", orientationMenu()))
         menu.addItem(submenu("Scrollen", scrollMenu()))
+        menu.addItem(toggle("1-Finger-Ziehen scrollt (statt Zeiger/Ziehen)", settings.oneFingerScroll, #selector(toggleOneFingerScroll)))
         menu.addItem(toggle("Exklusiv übernehmen (empfohlen)", settings.seize, #selector(toggleSeize)))
+        let touchOnly = toggle("Exklusiv nur Touch-Schnittstelle (Test: Maus/Vendor nicht exklusiv)", settings.seizeTouchOnly,
+                               #selector(toggleSeizeTouchOnly))
+        touchOnly.isEnabled = settings.seize
+        menu.addItem(touchOnly)
         menu.addItem(toggle("Systemzeiger vom Touch unterdrücken (wenn nicht exklusiv)", settings.suppressSystemPointer, #selector(toggleSuppress)))
         menu.addItem(.separator())
 
@@ -559,7 +567,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func permissionsMenu() -> NSMenu {
         let m = NSMenu()
-        m.addItem(toggle("Bedienungshilfen" + (Permissions.accessibility ? "" : " – fehlt"),
+        m.addItem(toggle(PermissionTexts.accessibilityName + (Permissions.accessibility ? "" : " – fehlt"),
                          Permissions.accessibility, #selector(openAccessibility)))
         m.addItem(toggle("Eingabeüberwachung" + (Permissions.inputMonitoring ? "" : " – fehlt"),
                          Permissions.inputMonitoring, #selector(openInputMonitoring)))
@@ -577,6 +585,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func toggleEnabled() { settings.enabled.toggle(); updateIcon() }
     @objc private func toggleSeize() { settings.seize.toggle() }
+    @objc private func toggleSeizeTouchOnly() { settings.seizeTouchOnly.toggle() }
+    @objc private func toggleOneFingerScroll() { settings.oneFingerScroll.toggle() }
     @objc private func toggleSuppress() { settings.suppressSystemPointer.toggle() }
     @objc private func toggleFlipX() { settings.flipX.toggle() }
     @objc private func toggleFlipY() { settings.flipY.toggle() }
@@ -628,7 +638,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.activate(ignoringOtherApps: true)
         let a = NSAlert()
         a.messageText = "Berechtigungen zurücksetzen?"
-        a.informativeText = "TouchBridge setzt Eingabeüberwachung und Bedienungshilfen für sich zurück (tccutil reset) und fragt danach neu. "
+        a.informativeText = "TouchBridge setzt Eingabeüberwachung und \(PermissionTexts.accessibilityName) für sich zurück (tccutil reset) und fragt danach neu. "
             + "Erlaube TouchBridge anschließend in beiden Dialogen bzw. in den Systemeinstellungen. "
             + "Hilft, wenn TouchBridge dort aktiviert ist, die Berechtigung aber nicht greift (veralteter Eintrag eines früheren Builds)."
         a.addButton(withTitle: "Zurücksetzen")
@@ -657,8 +667,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func quit() { NSApp.terminate(nil) }
 
-    /// 10-Sekunden-Diagnose: Touch-Dienst wird angehalten (Gerät freigegeben), dann werden ALLE HID-Interfaces des
-    /// Touch-Monitors nicht exklusiv geöffnet, Input Mode gesetzt und Rohreports protokolliert; dazu DDC-Probe.
+    /// 10-Sekunden-Diagnose: Touch-Dienst läuft weiter (stumm); bereits geöffnete Interfaces werden nur mitbeobachtet,
+    /// alle übrigen HID-Interfaces des Touch-Monitors nicht exklusiv geöffnet, Input Mode gesetzt und Rohreports protokolliert; dazu DDC-Probe.
     /// Ergebnis in die Zwischenablage und als Textdatei auf den Schreibtisch.
     @objc private func runDiagnosis() {
         diagnosing = true
@@ -670,16 +680,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let tb = CGDisplayBounds(service.targetDisplay)
         appendLog("Touch-Ziel: id=\(service.targetDisplay) \(Int(tb.width))×\(Int(tb.height)) @ (\(Int(tb.minX)),\(Int(tb.minY)))  Modus: \(settings.mode.title)")
-        appendLog("Bedienungshilfen: \(Permissions.accessibility)  Eingabeüberwachung: \(Permissions.inputMonitoringState)  Wirkung: \(service.inputMonitoringState.statusText)")
+        appendLog("\(PermissionTexts.accessibilityName): \(Permissions.accessibility)  Eingabeüberwachung: \(Permissions.inputMonitoringState)  Wirkung: \(service.inputMonitoringState.statusText)")
         appendLog("— Touch-Dienst vor der Diagnose —")
-        appendLog("Status: \(statusText)  Reports bisher: \(service.reportCount)")
+        appendLog("Status: \(statusText)  Reports bisher: \(service.reportCount)  (\(service.reportSummary))  Quelle: \(service.touchSource.title)")
         appendLog(InterfaceStatus.summary(service.status.interfaces) + (service.status.seizeError.map { "  – \($0)" } ?? ""))
         appendLog(service.suppressor.statsLine)
         for l in service.suppressor.samples { appendLog("   " + l) }
         for l in service.openLog { appendLog(l) }
         // ioreg-Halter, solange der Touch-Dienst die Schnittstellen noch hält (eigene doppelte Clients = Fehler)
         for l in SystemCheck.diagnosisLines(vid: settings.vid ?? HIDProbe.anmiteVID, pid: settings.pid ?? HIDProbe.anmitePID) { appendLog(l) }
-        service.stop()
+        // Touch-Dienst läuft weiter (keine zweite Registrierung/kein Neu-Öffnen); die Diagnose beobachtet mit.
+        // Während der Messung keine Klicks/Gesten senden.
+        service.muted = true
         statusItem.button?.title = " REC"
 
         let ctl = control
@@ -690,7 +702,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.probe = nil
             let finish = {
                 if let c = ctl { for l in c.probeDetails { self.appendLog(l) } } else { self.appendLog("DDC: kein Bildschirm-Objekt") }
-                self.service.start()
+                self.service.muted = false
+                self.appendLog("— Touch-Dienst nach der Diagnose —")
+                self.appendLog("Reports: \(self.service.reportSummary)  Quelle: \(self.service.touchSource.title)")
+                for l in self.service.openLog.suffix(40) { self.appendLog(l) }
                 self.diagnosing = false
                 self.statusItem.button?.title = ""
                 self.updateIcon()

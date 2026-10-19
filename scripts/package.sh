@@ -66,7 +66,7 @@ TouchBridge $ver
 1. TouchBridge in „Programme“ ziehen.
 2. Beim ersten Öffnen: Rechtsklick auf TouchBridge › Öffnen
    (oder Systemeinstellungen › Datenschutz & Sicherheit › „Trotzdem öffnen“).
-3. Bedienungshilfen und Eingabeüberwachung für TouchBridge erlauben.
+3. Gerätesteuerung und Datenzugriff (älteres macOS: Bedienungshilfen) und Eingabeüberwachung für TouchBridge erlauben.
    Nach einem Update ggf. einmalig im Terminal:
      tccutil reset ListenEvent com.groovex.touchbridge
      tccutil reset Accessibility com.groovex.touchbridge

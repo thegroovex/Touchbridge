@@ -30,6 +30,8 @@ func printUsage() {
                              Rohreports protokollieren (Standard 10 s), dann Ende
       --no-seize             Gerät nicht exklusiv öffnen
       --no-suppress          Systemzeiger-Unterdrückung (Event-Tap, wenn nicht exklusiv) ausschalten
+      --seize-touch-only     nur die Touch-(Digitizer-)Schnittstelle exklusiv, Maus/Vendor nicht (Test)
+      --one-finger-scroll    1-Finger-Ziehen scrollt statt Zeiger/Drag
       --rotate 0|90|180|270  Panel-Drehung (im Uhrzeigersinn)
       --swap-xy --flip-x --flip-y   Achsen anpassen
       --invert-scroll        Scrollrichtung umkehren
@@ -61,6 +63,8 @@ while !args.isEmpty {
         if let n = args.first.flatMap(Double.init) { diagnoseSeconds = n; args.removeFirst() }
     case "--no-seize": settings.seize = false
     case "--no-suppress": settings.suppressSystemPointer = false
+    case "--seize-touch-only": settings.seizeTouchOnly = true
+    case "--one-finger-scroll": settings.oneFingerScroll = true
     case "--rotate": settings.rotation = Int(next()) ?? 0
     case "--swap-xy": settings.swapXY = true
     case "--flip-x": settings.flipX = true
@@ -161,7 +165,7 @@ service.dumpMode = dump
 if !dump && settings.mode == .gestures {
     Permissions.requestAccessibility()
     if !Permissions.accessibility {
-        print("⚠️  Bitte unter Systemeinstellungen › Datenschutz & Sicherheit › Bedienungshilfen Zugriff geben und neu starten.")
+        print("⚠️  Bitte unter " + PermissionTexts.accessibilityPath + " Zugriff geben und neu starten.")
     }
 }
 if !Permissions.inputMonitoring {

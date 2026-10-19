@@ -35,11 +35,16 @@ public struct TouchSettings: Codable, Equatable {
     public var showOverlay = true
     /// Wenn eine Schnittstelle nicht exklusiv ist: macOS-eigene Maus-Events des Touch-Monitors per Event-Tap verwerfen
     public var suppressSystemPointer = true
+    /// Testoption: nur die Touch-(Digitizer-)Schnittstelle exklusiv übernehmen, Maus/Vendor nicht seizen
+    public var seizeTouchOnly = false
+    /// 1-Finger-Ziehen scrollt (statt Zeiger ziehen/Drag)
+    public var oneFingerScroll = false
     public init() {}
 
     enum CodingKeys: String, CodingKey {
         case enabled, displayID, rotation, flipX, flipY, swapXY, invertScroll, scrollGain, seize, vid, pid
         case mode, midiLayout, mpe, midiChannel, baseNote, scale, bendRange, showOverlay, suppressSystemPointer
+        case seizeTouchOnly, oneFingerScroll
     }
 
     /// Fehlende Schlüssel (ältere gespeicherte Einstellungen) fallen auf die Standardwerte zurück.
@@ -67,6 +72,8 @@ public struct TouchSettings: Codable, Equatable {
         bendRange = max(1, min(96, v(.bendRange, d.bendRange)))
         showOverlay = v(.showOverlay, d.showOverlay)
         suppressSystemPointer = v(.suppressSystemPointer, d.suppressSystemPointer)
+        seizeTouchOnly = v(.seizeTouchOnly, d.seizeTouchOnly)
+        oneFingerScroll = v(.oneFingerScroll, d.oneFingerScroll)
     }
 
     public var mapping: TouchMapping { TouchMapping(rotation: rotation, flipX: flipX, flipY: flipY, swapXY: swapXY) }
@@ -74,6 +81,7 @@ public struct TouchSettings: Codable, Equatable {
         var g = base
         g.invertScroll = invertScroll
         g.scrollGain = CGFloat(scrollGain)
+        g.oneFingerScroll = oneFingerScroll
         return g
     }
     public var midiConfig: MIDIConfig {
@@ -90,7 +98,7 @@ public struct TouchSettings: Codable, Equatable {
 
 public enum Permissions {
     public static var accessibility: Bool { AXIsProcessTrusted() }
-    /// Zeigt den Bedienungshilfen-Dialog („… möchte diesen Mac steuern“), falls nicht erteilt.
+    /// Zeigt den Dialog für Gerätesteuerung und Datenzugriff (früher Bedienungshilfen, „… möchte diesen Mac steuern“), falls nicht erteilt.
     public static func requestAccessibility() {
         askedAccessibility = true
         let o = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
@@ -156,6 +164,8 @@ public final class TouchService {
         public var legacyAgent = false
         /// Event-Tap-Fallback aktiv
         public var suppressing = false
+        /// Woher die Touch-Daten kommen (Multitouch oder Single-Touch über die Absolutmaus-Schnittstelle)
+        public var source: TouchSource = .none
     }
     /// Berechtigung nach tatsächlicher Wirkung (Reports, Return-Codes), nicht nur nach IOHIDCheckAccess
     public var inputMonitoringState: InputMonitoringState {
@@ -167,14 +177,53 @@ public final class TouchService {
     /// Zeit des letzten Touch-Reports und ob gerade berührt wird (für den Event-Tap)
     public private(set) var lastTouchReport: Double?
     fileprivate func touchReportSeen() { lastTouchReport = CFAbsoluteTimeGetCurrent() }
+    /// Reports der Absolutmaus-Schnittstelle als Touch auswerten? (nur solange kein Multitouch kommt)
+    fileprivate var usePointerSource: Bool { !multitouchActive }
     private var registry: HIDOpenRegistry { HIDOpenRegistry.shared }
     /// Return-Codes beim Öffnen / Input Mode je Gerät (für Diagnose und Menü)
     public private(set) var openLog: [String] = []
-    /// Anzahl empfangener HID-Input-Reports seit start()
+    /// Anzahl empfangener HID-Input-Reports seit start() (alle Schnittstellen)
     public private(set) var reportCount = 0
-    fileprivate func countReport() {
+    /// Touch-Reports vom Multitouch-Digitizer bzw. von der Absolutmaus-Schnittstelle
+    public private(set) var multitouchReports = 0
+    public private(set) var pointerReports = 0
+    /// Digitizer liefert echte Multitouch-Reports – Absolutmaus-Reports werden dann verworfen
+    public var multitouchActive: Bool { multitouchReports > 0 }
+    /// Während der Diagnose: Reports zählen, aber keine Events senden
+    public var muted = false {
+        didSet { if muted { releaseIfActive() } }
+    }
+    fileprivate func countReport(kind: TouchDevice.Kind) {
         reportCount += 1
-        if !status.receiving { status.receiving = true }
+        switch kind {
+        case .multitouch:
+            multitouchReports += 1
+            if multitouchReports == 1 {
+                // Multitouch läuft: laufende Single-Touch-Geste beenden, Maus-Schnittstelle nur noch verwerfen
+                for d in devices where d.kind == .pointer { d.resetContacts() }
+                releaseIfActive()
+                note("✅ Multitouch-Reports vom Digitizer – Absolutmaus-Schnittstelle wird ab jetzt verworfen.")
+                refreshStatus()
+            }
+        case .pointer:
+            pointerReports += 1
+            if pointerReports == 1 && !multitouchActive {
+                note("ℹ️  Touch-Daten kommen über die Maus-Schnittstelle: Single-Touch (Gerät im Mausmodus).")
+                refreshStatus()
+            }
+        case .none: break
+        }
+        if !status.receiving && kind != .none { status.receiving = true }
+    }
+    /// Woher die Touch-Daten kommen
+    public var touchSource: TouchSource {
+        TouchSource.evaluate(multitouchReports: multitouchReports,
+                             pointerInterfaces: devices.filter { $0.kind == .pointer }.count,
+                             multitouchInterfaces: devices.filter { $0.kind == .multitouch }.count)
+    }
+    /// „Touch: 0 Reports, Maus: 120 Reports, Vendor: 0 Reports“
+    public var reportSummary: String {
+        InterfaceStatus.reportSummary(devices.map { (role: $0.role, reports: $0.reports) })
     }
 
     public var settings: TouchSettings {
@@ -195,6 +244,7 @@ public final class TouchService {
             }
             if settings.suppressSystemPointer != oldValue.suppressSystemPointer { updateSuppression() }
             if settings.enabled != oldValue.enabled || settings.effectiveSeize != oldValue.effectiveSeize
+                || settings.seizeTouchOnly != oldValue.seizeTouchOnly
                 || settings.vid != oldValue.vid || settings.pid != oldValue.pid || settings.mode != oldValue.mode {
                 if running { stop(); start() }
             }
@@ -215,7 +265,22 @@ public final class TouchService {
     private let poster = EventPoster()
     private lazy var engine = GestureEngine(poster: poster, config: settings.gestureConfig(base: gestureBase))
     private var manager: IOHIDManager?
+    /// Manager-Callbacks bekommen einen Integer-Schlüssel als Context (kein Unmanaged auf self)
+    private static let services = WeakRegistry<TouchService>()
+    private lazy var serviceKey = TouchService.services.register(self)
     private var devices: [TouchDevice] = []
+    // Multitouch-Aktivierung (Varianten nacheinander, jeweils prüfen ob Digitizer-Reports kommen)
+    private struct Activation {
+        weak var device: TouchDevice?
+        var steps: [MultitouchActivationStep]
+        var index: Int
+        var mtAtStart: Int
+        var ptrAtStart: Int
+        var started: Double
+        var waitingLogged: Bool
+    }
+    private var activation: Activation?
+    private var activationTimer: Timer?
     private var pending: [IOHIDDevice] = []
     private var retryTimer: Timer?
     private var timer: Timer?
@@ -228,6 +293,8 @@ public final class TouchService {
         suppressor.lastReport = { [weak self] in self?.lastTouchReport }
         suppressor.touching = { [weak self] in self?.devices.contains(where: \.hadContacts) ?? false }
     }
+
+    deinit { TouchService.services.remove(serviceKey) }
 
     /// Hersteller-/Produktnamen der geöffneten Touch-Geräte (für die automatische Bildschirmwahl)
     public private(set) var deviceHints: [String] = []
@@ -249,6 +316,8 @@ public final class TouchService {
         running = true
         openLog = []
         reportCount = 0
+        multitouchReports = 0
+        pointerReports = 0
         guard settings.enabled || dumpMode else { status = Status(running: false); return }
 
         suppressor.log = log
@@ -265,12 +334,17 @@ public final class TouchService {
         let m = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
         manager = m
         IOHIDManagerSetDeviceMatchingMultiple(m, matching as CFArray)
-        let ctx = Unmanaged.passUnretained(self).toOpaque()
+        let ctx = WeakRegistry<TouchService>.context(serviceKey)
         IOHIDManagerRegisterDeviceMatchingCallback(m, { ctx, _, _, device in
-            Unmanaged<TouchService>.fromOpaque(ctx!).takeUnretainedValue().attach(device)
+            guard let k = WeakRegistry<TouchService>.key(ctx), let s = TouchService.services.lookup(k) else { return }
+            s.attach(device)
         }, ctx)
         IOHIDManagerRegisterDeviceRemovalCallback(m, { ctx, _, _, device in
-            Unmanaged<TouchService>.fromOpaque(ctx!).takeUnretainedValue().detach(device)
+            // Gerät weg: Hub-Registrierung immer abbauen, auch wenn der Dienst gerade nicht läuft
+            guard let k = WeakRegistry<TouchService>.key(ctx), let s = TouchService.services.lookup(k) else {
+                HIDInputHub.shared.deviceRemoved(device); return
+            }
+            s.detach(device)
         }, ctx)
         IOHIDManagerScheduleWithRunLoop(m, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
         status = Status(running: true, devices: [], exclusive: false, lastError: nil, inputMonitoring: access)
@@ -304,17 +378,22 @@ public final class TouchService {
         running = false
         timer?.invalidate(); timer = nil
         retryTimer?.invalidate(); retryTimer = nil
+        activationTimer?.invalidate(); activationTimer = nil
+        activation = nil
         pending.removeAll()
         if engine.isActive { engine.update([]) }
         midiEngine?.releaseAll()
         onMIDIUpdate?()
-        // erst Callbacks abmelden und Geräte schließen, dann Buffer/Context freigeben
+        // Beobachter abmelden und Geräte schließen. Die IOKit-Registrierung (Puffer, Callback) gehört dem
+        // HIDInputHub und bleibt bis zum Abstecken bestehen – kein Callback kann ein freigegebenes Objekt treffen.
         for d in devices { d.close() }
         devices.removeAll()
         suppressor.stop()
         if let m = manager {
-            IOHIDManagerRegisterDeviceMatchingCallback(m, nil, nil)
-            IOHIDManagerRegisterDeviceRemovalCallback(m, nil, nil)
+            // gleicher Context wie bei der Registrierung (IOKit vergleicht Einträge per Context)
+            let ctx = WeakRegistry<TouchService>.context(serviceKey)
+            IOHIDManagerRegisterDeviceMatchingCallback(m, nil, ctx)
+            IOHIDManagerRegisterDeviceRemovalCallback(m, nil, ctx)
             IOHIDManagerUnscheduleFromRunLoop(m, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
         }
         manager = nil
@@ -348,7 +427,7 @@ public final class TouchService {
 
     /// Öffnet ein Interface genau einmal (Seize mit Fallback auf nicht exklusiv). quiet: bei Wiederholungen nur Änderungen loggen.
     private func open(_ d: TouchDevice, quiet: Bool) -> IOReturn {
-        let seize = settings.effectiveSeize
+        let seize = wantsSeize(d)
         var rc: IOReturn
         d.exclusive = false
         if seize {
@@ -370,6 +449,12 @@ public final class TouchService {
         if !quiet || rc != d.lastOpenRC { note("   IOHIDDeviceOpen (nicht exklusiv) \(d.label): " + HIDReturn.describe(rc)) }
         d.lastOpenRC = rc
         return rc
+    }
+
+    /// Exklusiv anfordern? Bei „Exklusiv nur Touch-Schnittstelle“ nur den Multitouch-Digitizer.
+    private func wantsSeize(_ d: TouchDevice) -> Bool {
+        guard settings.effectiveSeize else { return false }
+        return !settings.seizeTouchOnly || d.kind == .multitouch
     }
 
     /// Meldung für einen gescheiterten Seize – „läuft doppelt“ nur, wenn wirklich ein zweiter Prozess/LaunchAgent existiert.
@@ -400,10 +485,10 @@ public final class TouchService {
         guard running else { return }
         for dev in pending { attach(dev, quiet: true) }
         if settings.effectiveSeize {
-            for d in devices where !d.exclusive && !d.hadContacts {   // nie mitten in einer Berührung
+            for d in devices where !d.exclusive && !d.hadContacts && wantsSeize(d) {   // nie mitten in einer Berührung
                 d.close()
                 let rc = open(d, quiet: true)
-                if rc == kIOReturnSuccess { d.start() } else { devices.removeAll { $0 === d }; pending.append(d.device) }
+                if rc == kIOReturnSuccess { d.start() } else { d.stopObserving(); devices.removeAll { $0 === d }; pending.append(d.device) }
                 if d.exclusive { note("✅ \(d.label) jetzt exklusiv übernommen."); d.seizeMessage = nil }
             }
         }
@@ -411,7 +496,10 @@ public final class TouchService {
     }
 
     private func refreshStatus() {
-        status.devices = devices.filter(\.isTouch).map(\.name)
+        var names: [String] = []
+        for d in devices where d.isTouch && !names.contains(d.name) { names.append(d.name) }
+        status.devices = names
+        status.source = touchSource
         status.interfaces = devices.map { InterfaceStatus(registryID: $0.registryID ?? 0, role: $0.role, exclusive: $0.exclusive) }
         status.exclusive = !devices.isEmpty && devices.allSatisfy(\.exclusive)
         status.seizeError = devices.first(where: { !$0.exclusive && $0.seizeMessage != nil })
@@ -421,6 +509,7 @@ public final class TouchService {
 
     /// Event-Tap-Fallback ein, wenn eine Schnittstelle nicht exklusiv ist (und die Option an ist), sonst aus.
     private func updateSuppression() {
+        // nur relevant für Schnittstellen, aus denen macOS Zeiger-Events macht (nicht exklusiv)
         let want = running && settings.enabled && !dumpMode && settings.suppressSystemPointer
             && devices.contains(where: { !$0.exclusive })
         if want {
@@ -467,16 +556,15 @@ public final class TouchService {
         let exclusive = d.exclusive
         d.start()
         devices.append(d)
-        if d.isTouch, let r = HIDFeature.applyInputMode(device, descriptor: d.descriptor, name: d.name, log: { [weak self] in self?.note($0) }) {
-            if r != kIOReturnSuccess { note("   (Input Mode ließ sich nicht setzen – Touch kann trotzdem funktionieren)") }
-        }
+        if d.kind == .multitouch { startActivation(d) }
         if d.isTouch { status.lastError = nil }
         deviceHints = devices.flatMap(\.hints)
         refreshStatus()
         if d.isTouch {
             let b = CGDisplayBounds(targetDisplay)
             note("🖥  Touch-Ziel: \(Displays.name(of: targetDisplay)) (id \(targetDisplay)) \(Int(b.width))×\(Int(b.height)) @ (\(Int(b.minX)),\(Int(b.minY)))"
-                 + (exclusive ? " – exklusiv" : " – NICHT exklusiv"))
+                 + (exclusive ? " – exklusiv" : " – NICHT exklusiv")
+                 + (d.kind == .pointer ? " – \(d.label) als Single-Touch-Quelle (Absolutmaus)" : ""))
         } else {
             note("🔒 Schnittstelle \(d.label) " + (exclusive ? "exklusiv übernommen (macOS bekommt keine Events mehr davon)" : "NICHT exklusiv geöffnet"))
         }
@@ -488,13 +576,86 @@ public final class TouchService {
         let same: (IOHIDDevice) -> Bool = { $0 === raw || (rid != nil && HIDOpenRegistry.registryID($0) == rid) }
         pending.removeAll(where: same)
         devices.removeAll { d in
-            if same(d.device) { log("🔌 Gerät getrennt: \(d.label)"); d.close(); registry.forget(d.device); return true }
+            if same(d.device) {
+                log("🔌 Gerät getrennt: \(d.label)")
+                d.close()
+                HIDInputHub.shared.deviceRemoved(d.device, registryID: d.registryID)
+                registry.forget(d.device)
+                return true
+            }
             return false
         }
+        HIDInputHub.shared.deviceRemoved(raw, registryID: rid)
+        refreshStatus()
+    }
+
+    // MARK: Multitouch aktivieren
+
+    /// Varianten aus dem Descriptor nacheinander anwenden; jede gilt als gescheitert, wenn während einer Berührung
+    /// (Reports der Maus-Schnittstelle) mindestens 2 s lang kein Multitouch-Report kommt.
+    private func startActivation(_ d: TouchDevice) {
+        guard !multitouchActive, activation == nil else { return }
+        let steps = d.descriptor.multitouchActivationPlan()
+        guard !steps.isEmpty else {
+            note("   Multitouch-Aktivierung: kein Input-Mode-Feature im Descriptor – nichts zu setzen")
+            return
+        }
+        activation = Activation(device: d, steps: steps, index: 0, mtAtStart: multitouchReports, ptrAtStart: pointerReports,
+                                started: CFAbsoluteTimeGetCurrent(), waitingLogged: false)
+        applyActivationStep()
+        let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in self?.checkActivation() }
+        RunLoop.main.add(t, forMode: .common)
+        activationTimer = t
+    }
+
+    private func applyActivationStep() {
+        guard var a = activation, let d = a.device, a.index < a.steps.count else { return }
+        let step = a.steps[a.index]
+        note("🔧 Multitouch-Versuch \(a.index + 1)/\(a.steps.count): \(step.name) – SetReport Feature "
+             + String(format: "0x%02X", step.reportID) + " [\(step.hex)]")
+        HIDFeature.apply(step, device: d.device, descriptor: d.descriptor) { [weak self] in self?.note($0) }
+        a.mtAtStart = multitouchReports
+        a.ptrAtStart = pointerReports
+        a.started = CFAbsoluteTimeGetCurrent()
+        a.waitingLogged = false
+        activation = a
+    }
+
+    private func checkActivation() {
+        guard var a = activation else { activationTimer?.invalidate(); activationTimer = nil; return }
+        if multitouchReports > a.mtAtStart || multitouchActive {
+            note("✅ Multitouch aktiv nach Versuch \(a.index + 1) (\(a.steps[a.index].name)).")
+            finishActivation(); return
+        }
+        let touched = pointerReports - a.ptrAtStart >= 5
+        guard CFAbsoluteTimeGetCurrent() - a.started >= 2 else { return }
+        guard touched else {
+            if !a.waitingLogged {
+                note("   … warte auf eine Berührung, um Versuch \(a.index + 1) zu prüfen")
+                a.waitingLogged = true
+                activation = a
+            }
+            return
+        }
+        note("   Versuch \(a.index + 1): keine Multitouch-Reports (Maus-Schnittstelle: \(pointerReports - a.ptrAtStart) Reports)")
+        a.index += 1
+        activation = a
+        if a.index < a.steps.count {
+            applyActivationStep()
+        } else {
+            note("⚠️  Multitouch ließ sich nicht aktivieren – Single-Touch über die Maus-Schnittstelle (Gerät im Mausmodus).")
+            finishActivation()
+        }
+    }
+
+    private func finishActivation() {
+        activationTimer?.invalidate(); activationTimer = nil
+        activation = nil
         refreshStatus()
     }
 
     fileprivate func deliver(_ contacts: [RawContact], layout: TouchLayout) {
+        if muted { return }
         guard let f0 = layout.fingers.first, let xf = f0.x, let yf = f0.y else { return }
         let rect = CGDisplayBounds(targetDisplay)
         let map = settings.mapping
@@ -531,25 +692,31 @@ public final class TouchService {
 
 // MARK: - Einzelnes HID-Gerät
 
+/// Eine geöffnete HID-Schnittstelle. Registriert selbst KEINE IOKit-Callbacks: sie hängt sich als Beobachter
+/// beim HIDInputHub ein (der Puffer und Registrierung für die Lebensdauer des IOHIDDevice besitzt).
 final class TouchDevice {
+    enum Kind { case multitouch, pointer, none }
+
     let device: IOHIDDevice
     let name: String
-    unowned let service: TouchService
-    let bufferSize: Int
-    let buffer: UnsafeMutablePointer<UInt8>
+    weak var service: TouchService?
     let descriptor: HIDDescriptor
     let hints: [String]
     let registryID: UInt64?
     let role: InterfaceRole
-    /// Interface liefert Multitouch-Frames (sonst nur exklusiv halten, Reports verwerfen/protokollieren)
-    var isTouch: Bool { !assembler.layouts.isEmpty }
+    /// multitouch: Finger-Layouts im Descriptor; pointer: Absolutmaus (X/Y absolut + Button 1) als Single-Touch;
+    /// none: nur exklusiv halten, Reports verwerfen
+    let kind: Kind
+    /// Interface liefert Touch-Frames (Multitouch oder Single-Touch-Absolutmaus)
+    var isTouch: Bool { kind != .none }
     var label: String { "\(name) [\(role.rawValue)" + (registryID.map { String(format: " 0x%llX", $0) } ?? "") + "]" }
     var seizeMessage: String?
     var exclusive = false
-    private var started = false
+    private var observation: HIDInputHub.Observation?
     private var assembler: TouchFrameAssembler
     private var lastReport = 0.0
     private(set) var hadContacts = false
+    private(set) var reports = 0
 
     var lastSeizeRC: IOReturn = kIOReturnSuccess
     var lastOpenRC: IOReturn = kIOReturnSuccess
@@ -561,7 +728,9 @@ final class TouchDevice {
             log("⚠️  \(nm): kein Report-Descriptor lesbar."); return nil
         }
         let desc = HIDDescriptor(bytes: [UInt8](data))
-        let asm = TouchFrameAssembler(descriptor: desc)
+        // jedes Interface, dessen Descriptor Finger liefert, ist Touch-Quelle; sonst Absolutmaus als Single-Touch
+        let asm = TouchFrameAssembler(descriptor: desc, pointerFallback: true)
+        let kind: Kind = asm.layouts.isEmpty ? .none : (asm.isPointer ? .pointer : .multitouch)
         let vid = (IOHIDDeviceGetProperty(device, kIOHIDVendorIDKey as CFString) as? Int) ?? 0
         let pid = (IOHIDDeviceGetProperty(device, kIOHIDProductIDKey as CFString) as? Int) ?? 0
         log("🖐  Gerät: \(nm)  (VID " + String(format: "0x%04X", vid) + ", PID " + String(format: "0x%04X", pid) + ")")
@@ -570,28 +739,34 @@ final class TouchDevice {
             ($0[kIOHIDDeviceUsagePageKey] as? Int ?? 0, $0[kIOHIDDeviceUsageKey] as? Int ?? 0)
         } + [((IOHIDDeviceGetProperty(device, kIOHIDPrimaryUsagePageKey as CFString) as? Int) ?? 0,
               (IOHIDDeviceGetProperty(device, kIOHIDPrimaryUsageKey as CFString) as? Int) ?? 0)]
-        let role = InterfaceRole.classify(usagePairs: pairs, hasTouchLayout: !asm.layouts.isEmpty)
+        let role = InterfaceRole.classify(usagePairs: pairs, hasTouchLayout: kind == .multitouch)
         log("   Schnittstelle: \(role.rawValue)  id " + (registryID.map { String(format: "0x%llX", $0) } ?? "?")
             + "  UsagePairs " + pairs.map { String(format: "0x%02X/0x%02X", $0.0, $0.1) }.joined(separator: ", "))
-        if asm.layouts.isEmpty {
+        switch kind {
+        case .none:
             guard auxiliary else {
                 log("⚠️  Keine Multitouch-Finger im Descriptor gefunden. Descriptor (hex):")
                 log(hex)
                 return nil
             }
-            log("   (keine Touch-Finger – wird nur exklusiv gehalten, damit macOS daraus keine Zeiger-Events macht)")
-        }
-        for (rid, l) in asm.layouts.sorted(by: { $0.key < $1.key }) {
-            log("   Report \(rid): \(l.fingers.count) Finger-Slots, Contact Count: \(l.contactCount != nil ? "ja" : "nein")")
-            if service.dumpMode {
-                for (i, f) in l.fingers.enumerated() {
-                    log("     Slot \(i): X[\(f.x?.describe ?? "-")] Y[\(f.y?.describe ?? "-")] Tip:\(f.tip != nil) ID:\(f.contactID != nil)")
+            log("   (keine Touch-Daten im Descriptor – wird nur exklusiv gehalten, damit macOS daraus keine Zeiger-Events macht)")
+        case .pointer:
+            for (rid, l) in asm.layouts.sorted(by: { $0.key < $1.key }) {
+                let f = l.fingers[0]
+                log("   Report \(rid): Absolutmaus X[\(f.x?.describe ?? "-")] Y[\(f.y?.describe ?? "-")] – Single-Touch-Fallback (Button 1 = Berührung)")
+            }
+        case .multitouch:
+            for (rid, l) in asm.layouts.sorted(by: { $0.key < $1.key }) {
+                log("   Report \(rid): \(l.fingers.count) Finger-Slots, Contact Count: \(l.contactCount != nil ? "ja" : "nein")")
+                if service.dumpMode {
+                    for (i, f) in l.fingers.enumerated() {
+                        log("     Slot \(i): X[\(f.x?.describe ?? "-")] Y[\(f.y?.describe ?? "-")] Tip:\(f.tip != nil) ID:\(f.contactID != nil)")
+                    }
                 }
             }
         }
         if service.dumpMode { log("   Descriptor (hex): " + hex) }
-        // Buffer >= MaxInputReportSize (Anmite Report 13: 1 + 10·5 + 2 + 1 = 54 Bytes), mindestens 256
-        let maxSize = (IOHIDDeviceGetProperty(device, kIOHIDMaxInputReportSizeKey as CFString) as? Int) ?? 256
+        let maxSize = (IOHIDDeviceGetProperty(device, kIOHIDMaxInputReportSizeKey as CFString) as? Int) ?? 0
         log("   MaxInputReportSize \(maxSize) Bytes")
         self.device = device
         self.service = service
@@ -602,69 +777,64 @@ final class TouchDevice {
         self.assembler = asm
         self.registryID = registryID
         self.role = role
-        self.bufferSize = max(maxSize, 256)
-        self.buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: max(maxSize, 256))
+        self.kind = kind
     }
 
-    deinit { buffer.deallocate() }
+    deinit { observation?.cancel() }
 
-    /// Callbacks abmelden, vom Runloop nehmen, schließen – vor dem Freigeben aufrufen.
-    private(set) var reports = 0
-    private(set) var values = 0
-    private func valueSeen() {
-        values += 1
-        if values == 50 && reports == 0 {
-            service.log("⚠️  \(name): HID-Werte kommen an, aber keine ganzen Reports (\(values) Werte, 0 Reports).")
+    /// Beobachter beim Hub einhängen (Hub registriert den IOKit-Callback nur beim ersten Mal je Gerät).
+    func start() {
+        guard observation == nil else { return }
+        observation = HIDInputHub.shared.observe(device, owner: self) { d, event in
+            if case let .report(_, bytes, _) = event { d.handle(bytes) }
         }
     }
 
+    func stopObserving() {
+        observation?.cancel()
+        observation = nil
+    }
+
+    /// Beobachter abmelden und schließen (Puffer/Callback bleiben beim Hub, kein Abmelden bei IOKit nötig).
     func close() {
-        guard started else { return }
-        started = false
-        IOHIDDeviceRegisterInputReportCallback(device, buffer, bufferSize, nil, nil)
-        IOHIDDeviceRegisterInputValueCallback(device, nil, nil)
-        IOHIDDeviceUnscheduleFromRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
+        stopObserving()
         HIDOpenRegistry.shared.close(device)
     }
 
-    func start() {
-        started = true
-        // Gerät selbst auf dem Main-Runloop einplanen (unabhängig vom Manager)
-        IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
-        let ctx = Unmanaged.passUnretained(self).toOpaque()
-        IOHIDDeviceRegisterInputReportCallback(device, buffer, bufferSize, { ctx, _, _, _, _, report, length in
-            guard let ctx = ctx else { return }
-            Unmanaged<TouchDevice>.fromOpaque(ctx).takeUnretainedValue()
-                .handle(UnsafeBufferPointer(start: report, count: length))
-        }, ctx)
-        // Fallback-Zähler: kommen Werte, aber keine Reports, liegt es an der Report-Zustellung
-        IOHIDDeviceRegisterInputValueCallback(device, { ctx, _, _, _ in
-            guard let ctx = ctx else { return }
-            Unmanaged<TouchDevice>.fromOpaque(ctx).takeUnretainedValue().valueSeen()
-        }, ctx)
+    func resetContacts() {
+        assembler.reset()
+        hadContacts = false
     }
 
     private func handle(_ r: UnsafeBufferPointer<UInt8>) {
         reports += 1
-        guard isTouch else {
+        guard let service = service else { return }
+        service.countReport(kind: kind)
+        switch kind {
+        case .none:
             if reports <= 3 || (service.dumpMode && reports <= 20) {
                 service.log("ℹ️  \(label): Report #\(reports) (\(r.count) Bytes, verworfen): " + HIDFeature.hex(Array(r.prefix(16))))
             }
             return
+        case .pointer:
+            guard service.usePointerSource else { return }   // Multitouch aktiv: Absolutmaus nur verwerfen
+            if reports == 1 { service.log("✅ \(label): erster Absolutmaus-Report (\(r.count) Bytes) – Single-Touch.") }
+        case .multitouch:
+            if reports == 1 { service.log("✅ \(name): erster Multitouch-Report empfangen (\(r.count) Bytes).") }
         }
-        service.countReport()
         service.touchReportSeen()
-        if reports == 1 { service.log("✅ \(name): erster Touch-Report empfangen (\(r.count) Bytes).") }
         guard let result = assembler.feed(r) else { return }
         lastReport = CFAbsoluteTimeGetCurrent()
         hadContacts = !result.contacts.isEmpty
         service.deliver(result.contacts, layout: result.layout)
     }
 
+    /// Ohne Reports keine Berührung mehr (verlorenes „Loslassen“). Nicht für die Absolutmaus: die meldet beim
+    /// Stillhalten evtl. nichts, das Loslassen (Button 1 = 0) kommt aber zuverlässig.
     func checkStale(_ timeout: Double) {
-        guard hadContacts, CFAbsoluteTimeGetCurrent() - lastReport > timeout else { return }
+        guard kind == .multitouch, hadContacts, CFAbsoluteTimeGetCurrent() - lastReport > timeout else { return }
         assembler.reset()
         hadContacts = false
-        service.releaseIfActive()
+        service?.releaseIfActive()
     }
 }

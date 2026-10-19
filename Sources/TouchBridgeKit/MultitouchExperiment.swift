@@ -110,6 +110,30 @@ enum MultitouchInitializer {
         return rc
     }
 
+    /// e) IOHIDDeviceSetValue auf jedes Feature-Element Digitizer/Device Mode (0x0D/0x52) = 2 – elementbasiert statt
+    /// Roh-Report (Ansatz aus Shadowhusky/xeneon-toolbox). Auf allen übergebenen Schnittstellen.
+    @discardableResult
+    static func hidSetValue(_ devices: [TouchDevice], log: (String) -> Void) -> Int {
+        var hits = 0
+        for d in devices {
+            guard let els = IOHIDDeviceCopyMatchingElements(d.device, nil, 0) as? [IOHIDElement] else { continue }
+            for el in els where IOHIDElementGetType(el) == kIOHIDElementTypeFeature
+                && IOHIDElementGetUsagePage(el) == 0x0D && IOHIDElementGetUsage(el) == 0x52 {
+                hits += 1
+                let v = IOHIDValueCreateWithIntegerValue(kCFAllocatorDefault, el, 0, 2)
+                let rc = IOHIDDeviceSetValue(d.device, el, v)
+                // Rücklesen direkt vom Gerät (kIOHIDDeviceGetValueWithUpdate = 0x00020000), nicht aus dem Cache
+                var back = Unmanaged<IOHIDValue>.passUnretained(v)
+                let grc = IOHIDDeviceGetValueWithOptions(d.device, el, &back, 0x0002_0000)
+                let readback = grc == kIOReturnSuccess ? String(IOHIDValueGetIntegerValue(back.takeUnretainedValue())) : "–"
+                log(String(format: "   IOHIDDeviceSetValue Device Mode=2 (%@, Feature 0x%02X): ", d.role.rawValue, IOHIDElementGetReportID(el))
+                    + HIDReturn.describe(rc) + "  Rücklesen: " + HIDReturn.describe(grc) + " Wert \(readback)")
+            }
+        }
+        if hits == 0 { log("   kein Element 0x0D/0x52 gefunden") }
+        return hits
+    }
+
     /// c) Linux-Sequenz als USB-Control-Requests. `viaInterface`: über den Interface-User-Client statt Gerät.
     /// Rückgabe: SET_REPORT Input Mode erfolgreich übertragen
     @discardableResult
@@ -217,7 +241,7 @@ public final class MultitouchExperiment {
             log("❌ Digitizer-Schnittstelle (Report 13) nicht geöffnet – Experimente abgebrochen.")
             finish(); return
         }
-        queue = [.hidInputGet, .hidFeature, .usbLinuxInit, .usbInterfaceLinuxInit] + (options.reenumerate ? [.usbReenumerateInit] : [])
+        queue = [.hidSetValue, .hidInputGet, .hidFeature, .usbLinuxInit, .usbInterfaceLinuxInit] + (options.reenumerate ? [.usbReenumerateInit] : [])
         next()
     }
 
@@ -252,6 +276,9 @@ public final class MultitouchExperiment {
             done()
         case .usbReenumerateInit:
             reenumerate(done: done)
+        case .hidSetValue:
+            MultitouchInitializer.hidSetValue(service.devices, log: l)
+            done()
         }
     }
 
@@ -274,7 +301,8 @@ public final class MultitouchExperiment {
         service.onDigitizerAttached = { [weak self] dev in
             guard let self = self, !reattached else { return }
             reattached = true
-            self.log("   HID-Digitizer wieder da (\(dev.label)) – sofort Input Mode per IOHID (wie hid-multitouch nach usbhid):")
+            self.log("   HID-Digitizer wieder da (\(dev.label)) – sofort Device Mode per SetValue + Input Mode per IOHID:")
+            MultitouchInitializer.hidSetValue([dev]) { self.log($0) }
             MultitouchInitializer.hidFeature(dev) { self.log($0) }
             done()
         }
@@ -373,6 +401,8 @@ extension TouchService {
             MultitouchInitializer.hidInputGet(devices.first { $0.kind == .pointer }, reportID: 7, log: l)
         case .hidFeature:
             MultitouchInitializer.hidFeature(d, log: l)
+        case .hidSetValue:
+            MultitouchInitializer.hidSetValue(devices, log: l)
         case .usbLinuxInit, .usbInterfaceLinuxInit:
             guard let ifn = MultitouchInitializer.interfaceNumber(d.device) else { log("   bInterfaceNumber fehlt"); return }
             MultitouchInitializer.usbLinuxInit(vid: vid, pid: pid, interfaces: MultitouchInitializer.interfaceNumbers(devices),

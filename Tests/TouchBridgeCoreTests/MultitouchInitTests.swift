@@ -75,9 +75,10 @@ final class MultitouchSequenceTests: XCTestCase {
     func testRawValuesStable() {
         // gespeichert in den Einstellungen – Werte dürfen sich nicht ändern
         XCTAssertEqual(MultitouchSequence.allCases.map(\.rawValue),
-                       ["hid-input-get", "hid-feature", "usb-linux-init", "usb-interface-linux-init", "usb-reenumerate-init"])
+                       ["hid-input-get", "hid-feature", "usb-linux-init", "usb-interface-linux-init", "usb-reenumerate-init", "hid-set-value"])
         XCTAssertEqual(MultitouchSequence(rawValue: "usb-linux-init"), .usbLinuxInit)
         XCTAssertTrue(MultitouchSequence.usbReenumerateInit.reconnects)
         XCTAssertFalse(MultitouchSequence.hidFeature.reconnects)
+        XCTAssertFalse(MultitouchSequence.hidSetValue.reconnects)
     }
 }

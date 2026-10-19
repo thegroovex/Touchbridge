@@ -155,6 +155,9 @@ public enum MultitouchSequence: String, Codable, CaseIterable {
     case usbInterfaceLinuxInit = "usb-interface-linux-init"
     /// d) USB-Neu-Enumeration, sofort danach die Linux-Sequenz
     case usbReenumerateInit = "usb-reenumerate-init"
+    /// e) IOHIDDeviceSetValue auf das Element Digitizer/Device Mode (0x0D/0x52) = 2 auf jeder Schnittstelle
+    ///    (Ansatz aus Shadowhusky/xeneon-toolbox, gleicher Controller 27C0:0859; dort ohne Nachweis als funktionierend beschrieben)
+    case hidSetValue = "hid-set-value"
 
     public var title: String {
         switch self {
@@ -163,6 +166,7 @@ public enum MultitouchSequence: String, Codable, CaseIterable {
         case .usbLinuxInit: return "c) USB-Control: SET_IDLE + Input Mode (Gerät)"
         case .usbInterfaceLinuxInit: return "c') USB-Control über Interface-Client"
         case .usbReenumerateInit: return "d) Neu-Enumeration + sofort Linux-Init"
+        case .hidSetValue: return "e) IOHIDDeviceSetValue Device Mode = 2 (Xeneon-Toolbox-Ansatz)"
         }
     }
 

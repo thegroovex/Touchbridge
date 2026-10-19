@@ -83,11 +83,20 @@ final class DisplayTargetTests: XCTestCase {
     func testChoosesMatchingExternalDisplay() {
         XCTAssertEqual(DisplayChoice.choose([mac, other, anmite], preferred: nil, deviceHints: ["TouchScreen", "ANMITE"]), 5)
         XCTAssertEqual(DisplayChoice.choose([mac, anmite], preferred: nil, deviceHints: []), 5)      // einziger externer
-        XCTAssertEqual(DisplayChoice.choose([mac, anmite, other], preferred: 7, deviceHints: ["ANMITE"]), 7)
+        // Anmite gewinnt auch gegen eine gespeicherte Wahl
+        XCTAssertEqual(DisplayChoice.choose([mac, anmite, other], preferred: 7, deviceHints: ["ANMITE"]), 5)
+        XCTAssertEqual(DisplayChoice.choose([mac, anmite, other], preferred: 7, deviceHints: []), 5)
+        // gespeicherte Wahl gilt, wenn kein Anmite erkannt wird – aber nie der integrierte Bildschirm
+        XCTAssertEqual(DisplayChoice.choose([mac, other], preferred: 7, deviceHints: []), 7)
+        XCTAssertEqual(DisplayChoice.choose([mac, other], preferred: 1, deviceHints: []), 7)
+        XCTAssertEqual(DisplayChoice.choose([mac, DisplayCandidate(id: 9, name: "A140W05T", isBuiltin: false, isMain: false), other],
+                                            preferred: nil, deviceHints: []), 9)
         XCTAssertEqual(DisplayChoice.choose([mac, anmite], preferred: 99, deviceHints: []), 5)      // gewählter weg
-        XCTAssertEqual(DisplayChoice.choose([mac], preferred: nil, deviceHints: ["ANMITE"]), 1)
+        XCTAssertNil(DisplayChoice.choose([mac], preferred: nil, deviceHints: ["ANMITE"]))   // nur integriert: kein Ziel
+        XCTAssertNil(DisplayChoice.choose([mac], preferred: 1, deviceHints: []))
         // generische Wörter („Touch“, „Screen“) dürfen nicht auf irgendeinen Bildschirm passen
-        XCTAssertEqual(DisplayChoice.choose([mac, other, anmite], preferred: nil, deviceHints: ["Touch Screen"]), 7)
+        let generic = DisplayCandidate(id: 8, name: "Touch Screen Pro", isBuiltin: false, isMain: false)
+        XCTAssertEqual(DisplayChoice.choose([mac, other, generic], preferred: nil, deviceHints: ["Touch Screen"]), 7)
     }
 
     func testAbsoluteMappingOnNegativeOrigin() {

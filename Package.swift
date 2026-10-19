@@ -15,10 +15,16 @@ let package = Package(
             path: "Sources/TouchBridgeCore",
             linkerSettings: [.linkedFramework("CoreGraphics")]
         ),
+        // Direkte USB-Control-Requests (IOUSBLib, C) für die Multitouch-Experimente
+        .target(
+            name: "TouchBridgeUSB",
+            path: "Sources/TouchBridgeUSB",
+            linkerSettings: [.linkedFramework("IOKit"), .linkedFramework("CoreFoundation")]
+        ),
         // macOS-Anbindung: IOKit-HID-Dienst, Bildschirme, Bildsteuerung (DDC / Gamma), CoreMIDI-Port, Rechte
         .target(
             name: "TouchBridgeKit",
-            dependencies: ["TouchBridgeCore"],
+            dependencies: ["TouchBridgeCore", "TouchBridgeUSB"],
             path: "Sources/TouchBridgeKit",
             linkerSettings: [
                 .linkedFramework("IOKit"),

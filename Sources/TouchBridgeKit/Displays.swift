@@ -48,7 +48,12 @@ public enum Displays {
     /// Bevorzugt: gewählte ID, sonst der externe Bildschirm, dessen Name zum Touch-Gerät passt (deviceHints,
     /// z. B. Hersteller/Produkt „ANMITE“), sonst der einzige externe, sonst erster externer Nicht-Hauptbildschirm.
     public static func resolve(_ preferred: CGDirectDisplayID?, deviceHints: [String] = []) -> CGDirectDisplayID {
+        touchTarget(preferred, deviceHints: deviceHints) ?? CGMainDisplayID()
+    }
+
+    /// Touch-Ziel oder nil, solange kein externer Bildschirm aktiv ist (nie der integrierte)
+    public static func touchTarget(_ preferred: CGDirectDisplayID?, deviceHints: [String] = []) -> CGDirectDisplayID? {
         let list = all().map { DisplayCandidate(id: $0.id, name: $0.name, isBuiltin: $0.isBuiltin, isMain: $0.isMain) }
-        return DisplayChoice.choose(list, preferred: preferred, deviceHints: deviceHints) ?? CGMainDisplayID()
+        return DisplayChoice.choose(list, preferred: preferred, deviceHints: deviceHints)
     }
 }

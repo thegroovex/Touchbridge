@@ -182,6 +182,26 @@ public final class HIDOpenRegistry {
         tracker.closed(id)
     }
 
+    /// Existiert der Registry-Eintrag noch? (nach Abstecken/Neu-Enumeration/Ruhezustand nicht mehr)
+    public static func isLive(_ id: UInt64) -> Bool {
+        guard let m = IORegistryEntryIDMatching(id) else { return false }
+        let s = IOServiceGetMatchingService(0, m)
+        guard s != 0 else { return false }
+        IOObjectRelease(s)
+        return true
+    }
+
+    /// Objekte zu nicht mehr existierenden Registry-IDs verwerfen; liefert die verworfenen IDs
+    @discardableResult
+    public func pruneDead() -> [UInt64] {
+        let dead = objects.keys.filter { !HIDOpenRegistry.isLive($0) }
+        for id in dead {
+            objects[id] = nil
+            if tracker.isOpen(id) { tracker.closed(id) }
+        }
+        return dead
+    }
+
     /// Gerät abgesteckt: Objekt vergessen
     public func forget(_ d: IOHIDDevice) {
         guard let id = HIDOpenRegistry.registryID(d) else { return }

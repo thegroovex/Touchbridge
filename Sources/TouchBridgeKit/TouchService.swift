@@ -39,12 +39,14 @@ public struct TouchSettings: Codable, Equatable {
     public var seizeTouchOnly = false
     /// 1-Finger-Ziehen scrollt (statt Zeiger ziehen/Drag)
     public var oneFingerScroll = false
+    /// Erfolgreiche Multitouch-Sequenz aus den Experimenten (MultitouchSequence.rawValue) – beim Verbinden anwenden
+    public var mtSequence: String? = nil
     public init() {}
 
     enum CodingKeys: String, CodingKey {
         case enabled, displayID, rotation, flipX, flipY, swapXY, invertScroll, scrollGain, seize, vid, pid
         case mode, midiLayout, mpe, midiChannel, baseNote, scale, bendRange, showOverlay, suppressSystemPointer
-        case seizeTouchOnly, oneFingerScroll
+        case seizeTouchOnly, oneFingerScroll, mtSequence
     }
 
     /// Fehlende Schlüssel (ältere gespeicherte Einstellungen) fallen auf die Standardwerte zurück.
@@ -74,7 +76,9 @@ public struct TouchSettings: Codable, Equatable {
         suppressSystemPointer = v(.suppressSystemPointer, d.suppressSystemPointer)
         seizeTouchOnly = v(.seizeTouchOnly, d.seizeTouchOnly)
         oneFingerScroll = v(.oneFingerScroll, d.oneFingerScroll)
+        mtSequence = (try? c.decodeIfPresent(String.self, forKey: .mtSequence)) ?? nil
     }
+    public var multitouchSequence: MultitouchSequence? { mtSequence.flatMap(MultitouchSequence.init(rawValue:)) }
 
     public var mapping: TouchMapping { TouchMapping(rotation: rotation, flipX: flipX, flipY: flipY, swapXY: swapXY) }
     public func gestureConfig(base: GestureConfig = GestureConfig()) -> GestureConfig {
@@ -187,6 +191,11 @@ public final class TouchService {
     /// Touch-Reports vom Multitouch-Digitizer bzw. von der Absolutmaus-Schnittstelle
     public private(set) var multitouchReports = 0
     public private(set) var pointerReports = 0
+    /// Reports der übrigen Schnittstellen (Vendor 0xFF0A, Input 0x50 – nur gelesen)
+    public private(set) var vendorReports = 0
+    /// Multitouch-Experimente laufen: keine automatischen Aktivierungsversuche, Digitizer-Anschluss melden
+    var experimentActive = false
+    var onDigitizerAttached: ((TouchDevice) -> Void)?
     /// Digitizer liefert echte Multitouch-Reports – Absolutmaus-Reports werden dann verworfen
     public var multitouchActive: Bool { multitouchReports > 0 }
     /// Während der Diagnose: Reports zählen, aber keine Events senden
@@ -211,7 +220,7 @@ public final class TouchService {
                 note("ℹ️  Touch-Daten kommen über die Maus-Schnittstelle: Single-Touch (Gerät im Mausmodus).")
                 refreshStatus()
             }
-        case .none: break
+        case .none: vendorReports += 1
         }
         if !status.receiving && kind != .none { status.receiving = true }
     }
@@ -268,7 +277,7 @@ public final class TouchService {
     /// Manager-Callbacks bekommen einen Integer-Schlüssel als Context (kein Unmanaged auf self)
     private static let services = WeakRegistry<TouchService>()
     private lazy var serviceKey = TouchService.services.register(self)
-    private var devices: [TouchDevice] = []
+    var devices: [TouchDevice] = []
     // Multitouch-Aktivierung (Varianten nacheinander, jeweils prüfen ob Digitizer-Reports kommen)
     private struct Activation {
         weak var device: TouchDevice?
@@ -298,7 +307,30 @@ public final class TouchService {
 
     /// Hersteller-/Produktnamen der geöffneten Touch-Geräte (für die automatische Bildschirmwahl)
     public private(set) var deviceHints: [String] = []
-    public var targetDisplay: CGDirectDisplayID { Displays.resolve(settings.displayID, deviceHints: deviceHints) }
+    public var targetDisplay: CGDirectDisplayID { touchTarget ?? CGMainDisplayID() }
+    /// Touch-Ziel: immer der Anmite (per Name), sonst externer Bildschirm; nil ohne externen Bildschirm (dann
+    /// werden Touch-Daten verworfen statt auf dem integrierten Bildschirm zu landen)
+    public var touchTarget: CGDirectDisplayID? { Displays.touchTarget(settings.displayID, deviceHints: deviceHints) }
+    private var loggedTarget: CGDirectDisplayID?? = .none
+    private func targetLine(_ t: CGDirectDisplayID?) -> String {
+        guard let t = t else { return "🖥  Touch-Ziel: noch kein externer Bildschirm aktiv – Touch wird verworfen, bis der Anmite erscheint" }
+        let b = CGDisplayBounds(t)
+        return "🖥  Touch-Ziel: \(Displays.name(of: t)) (id \(t)) \(Int(b.width))×\(Int(b.height)) @ (\(Int(b.minX)),\(Int(b.minY)))"
+    }
+
+    /// Einträge mit nicht mehr existierender Registry-ID (verpasstes Abstecken, Ruhezustand, Neu-Enumeration) verwerfen
+    private func pruneStale() {
+        devices.removeAll { d in
+            guard let id = d.registryID, !HIDOpenRegistry.isLive(id) else { return false }
+            note("🧹 Veraltete Registrierung verworfen: \(d.label)")
+            d.close()
+            HIDInputHub.shared.deviceRemoved(d.device, registryID: id)
+            registry.forget(d.device)
+            return true
+        }
+        pending.removeAll { dev in HIDOpenRegistry.registryID(dev).map { !HIDOpenRegistry.isLive($0) } ?? true }
+        registry.pruneDead()
+    }
 
     /// Geräte, die zum Touch-Monitor gehören können: Digitizer/Touchscreen (0x0D/0x04) und der Anmite per VID/PID –
     /// bzw. nur VID/PID, wenn per --vid/--pid vorgegeben.
@@ -318,6 +350,7 @@ public final class TouchService {
         reportCount = 0
         multitouchReports = 0
         pointerReports = 0
+        vendorReports = 0
         guard settings.enabled || dumpMode else { status = Status(running: false); return }
 
         suppressor.log = log
@@ -349,7 +382,10 @@ public final class TouchService {
         IOHIDManagerScheduleWithRunLoop(m, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
         status = Status(running: true, devices: [], exclusive: false, lastError: nil, inputMonitoring: access)
         lastTouchReport = nil
-        // Bereits angeschlossene Geräte sofort übernehmen (der Matching-Callback dedupliziert)
+        // Bereits angeschlossene Geräte sofort übernehmen (der Matching-Callback dedupliziert); alte Objekte zu
+        // verschwundenen Registry-IDs vorher verwerfen
+        registry.pruneDead()
+        loggedTarget = .none
         if let set = IOHIDManagerCopyDevices(m) as? Set<IOHIDDevice> {
             for d in set { attach(d) }
         }
@@ -483,6 +519,7 @@ public final class TouchService {
     /// (vorher sauber schließen – nie ein zweites IOHIDDeviceOpen auf ein offenes Interface).
     private func retryDevices() {
         guard running else { return }
+        pruneStale()
         for dev in pending { attach(dev, quiet: true) }
         if settings.effectiveSeize {
             for d in devices where !d.exclusive && !d.hadContacts && wantsSeize(d) {   // nie mitten in einer Berührung
@@ -536,6 +573,9 @@ public final class TouchService {
 
     private func attach(_ raw: IOHIDDevice, quiet: Bool) {
         guard running, manager != nil else { return }
+        // Gerät schon wieder weg (veraltete Registry-ID)? Dann nicht übernehmen
+        if let id = HIDOpenRegistry.registryID(raw), !HIDOpenRegistry.isLive(id) { return }
+        pruneStale()
         // ein IOHIDDevice-Objekt pro Registry-ID, jedes Interface genau einmal
         let (device, rid) = registry.canonical(raw)
         guard !devices.contains(where: { $0.device === device || ($0.registryID != nil && $0.registryID == rid) }) else { return }
@@ -556,13 +596,18 @@ public final class TouchService {
         let exclusive = d.exclusive
         d.start()
         devices.append(d)
-        if d.kind == .multitouch { startActivation(d) }
+        if d.kind == .multitouch {
+            if experimentActive { onDigitizerAttached?(d) }
+            else if let seq = settings.multitouchSequence { applyRemembered(seq, to: d) }
+            else { startActivation(d) }
+        }
         if d.isTouch { status.lastError = nil }
         deviceHints = devices.flatMap(\.hints)
         refreshStatus()
         if d.isTouch {
-            let b = CGDisplayBounds(targetDisplay)
-            note("🖥  Touch-Ziel: \(Displays.name(of: targetDisplay)) (id \(targetDisplay)) \(Int(b.width))×\(Int(b.height)) @ (\(Int(b.minX)),\(Int(b.minY)))"
+            let t = touchTarget
+            loggedTarget = .some(t)
+            note(targetLine(t)
                  + (exclusive ? " – exklusiv" : " – NICHT exklusiv")
                  + (d.kind == .pointer ? " – \(d.label) als Single-Touch-Quelle (Absolutmaus)" : ""))
         } else {
@@ -657,7 +702,10 @@ public final class TouchService {
     fileprivate func deliver(_ contacts: [RawContact], layout: TouchLayout) {
         if muted { return }
         guard let f0 = layout.fingers.first, let xf = f0.x, let yf = f0.y else { return }
-        let rect = CGDisplayBounds(targetDisplay)
+        let target = touchTarget
+        if loggedTarget != .some(target) { loggedTarget = .some(target); note(targetLine(target)) }
+        guard let targetID = target else { return }
+        let rect = CGDisplayBounds(targetID)
         let map = settings.mapping
         if settings.mode == .midi && !dumpMode {
             let touches = contacts.map { c -> TouchPoint in

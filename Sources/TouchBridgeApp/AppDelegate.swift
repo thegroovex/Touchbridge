@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var logLines: [String] = []
     private var diagnosing = false
     private var probe: HIDProbe?
+    private var experiment: MultitouchExperiment?
     private var signalSources: [DispatchSourceSignal] = []
     private var permissionTimer: Timer?
     private var hadInputMonitoring = Permissions.inputMonitoring
@@ -452,6 +453,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(toggle("Beim Anmelden starten", SMAppService.mainApp.status == .enabled, #selector(toggleLogin)))
         }
         menu.addItem(action(diagnosing ? "Diagnose läuft – Bildschirm berühren …" : "Diagnose aufzeichnen (10 s Touch)", #selector(runDiagnosis), enabled: !diagnosing))
+        menu.addItem(action(experiment != nil ? "Multitouch-Experimente laufen – mit 2 Fingern tippen …" : "Multitouch-Experimente starten …",
+                            #selector(runMTExperiments), enabled: experiment == nil && !diagnosing))
+        if let seq = settings.multitouchSequence {
+            menu.addItem(warning("Gespeicherte Multitouch-Sequenz: \(seq.title)", color: .secondaryLabelColor))
+            menu.addItem(action("Gespeicherte Multitouch-Sequenz vergessen", #selector(forgetMTSequence)))
+        }
         menu.addItem(action("Kommandozeilen-Tool installieren …", #selector(installCLI)))
         menu.addItem(submenu("Updates", updatesMenu()))
         menu.addItem(action("Hilfe", #selector(openHelp)))
@@ -739,6 +746,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if let c = ctl { c.probe { _ in finish() } } else { finish() }
         }
     }
+
+    /// Multitouch-Experimente (a–e): jeder Schritt protokolliert, danach 3 s Warten auf Report 13 vom Digitizer.
+    /// Erfolgreiche Sequenz wird gespeichert und künftig beim Verbinden angewendet.
+    @objc private func runMTExperiments() {
+        guard service.status.running, settings.enabled else {
+            alert("Touch ist aus", "Bitte zuerst „Touch aktiv“ einschalten – die Experimente brauchen die geöffneten Schnittstellen."); return
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        let a = NSAlert()
+        a.messageText = "Multitouch-Experimente starten?"
+        a.informativeText = "TouchBridge probiert nacheinander 5 Wege, den Anmite in den Multitouch-Modus zu schalten "
+            + "(GetReport, Feature-Reports, direkte USB-Requests wie unter Linux/Android, zuletzt kurzes Neu-Verbinden des Touch-USB).\n\n"
+            + "Bitte nach „Start“ ca. 40 Sekunden lang immer wieder mit 2 Fingern auf den Anmite tippen und wischen, "
+            + "bis die Meldung „Experimente fertig“ erscheint. Klicks werden währenddessen nicht ausgelöst.\n\n"
+            + "Am Vendor-Kanal wird nichts geschrieben (nur gelesen). Das Protokoll landet in der Zwischenablage und als "
+            + "„TouchBridge-MT-Experimente.txt“ auf dem Schreibtisch."
+        a.addButton(withTitle: "Start")
+        a.addButton(withTitle: "Abbrechen")
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        logLines.removeAll()
+        appendLog("TouchBridge \(AppDelegate.version) – macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
+        statusItem.button?.title = " MT"
+        let e = MultitouchExperiment(service: service) { [weak self] in self?.appendLog($0) }
+        experiment = e
+        e.run { [weak self] seq in
+            guard let self = self else { return }
+            self.experiment = nil
+            if let seq = seq { self.settings.mtSequence = seq.rawValue }
+            self.statusItem.button?.title = ""
+            self.updateIcon()
+            let text = self.logLines.joined(separator: "\n")
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            let url = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("TouchBridge-MT-Experimente.txt")
+            try? text.write(to: url, atomically: true, encoding: .utf8)
+            self.alert("Experimente fertig",
+                       (seq.map { "Multitouch aktiv mit „\($0.title)“ – gespeichert, wird künftig beim Verbinden angewendet." }
+                        ?? "Kein Weg brachte Multitouch – Single-Touch bleibt aktiv.")
+                       + " Protokoll in der Zwischenablage und auf dem Schreibtisch.")
+        }
+    }
+
+    @objc private func forgetMTSequence() { settings.mtSequence = nil }
 
     /// Verlinkt das CLI aus dem App-Bundle nach /usr/local/bin/touchbridge (fragt nach dem Admin-Passwort).
     @objc private func installCLI() {

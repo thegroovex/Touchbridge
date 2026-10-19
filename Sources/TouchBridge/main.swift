@@ -13,6 +13,8 @@ var ddcGet: [String] = []
 var ddcSet: [(String, Int)] = []
 var diagnoseSeconds: Double? = nil
 var checkUpdate = false
+var mtProbe = false
+var mtOptions = MultitouchExperiment.Options()
 
 func parseInt(_ s: String) -> Int? {
     s.lowercased().hasPrefix("0x") ? Int(s.dropFirst(2), radix: 16) : Int(s)
@@ -28,6 +30,11 @@ func printUsage() {
       --check-update         auf GitHub nach einer neueren Version suchen (inkl. Vorabversionen), dann Ende
       --diagnose [SEK]       alle HID-Interfaces des Touch-Monitors nicht exklusiv öffnen, Input Mode setzen,
                              Rohreports protokollieren (Standard 10 s), dann Ende
+      --mt-probe             Multitouch-Experimente (a–e) ausführen, jeweils 3 s auf Report 13 warten
+                             (dabei mit 2 Fingern tippen), dann Ende (Exit 0 = Multitouch gefunden, 6 = nicht)
+      --skip-reenumerate     bei --mt-probe den Schritt d (USB-Neu-Enumeration) auslassen
+      --mt-sequence NAME     Multitouch-Sequenz beim Verbinden anwenden: hid-input-get|hid-feature|
+                             usb-linux-init|usb-interface-linux-init|usb-reenumerate-init
       --no-seize             Gerät nicht exklusiv öffnen
       --no-suppress          Systemzeiger-Unterdrückung (Event-Tap, wenn nicht exklusiv) ausschalten
       --seize-touch-only     nur die Touch-(Digitizer-)Schnittstelle exklusiv, Maus/Vendor nicht (Test)
@@ -61,6 +68,12 @@ while !args.isEmpty {
     case "--diagnose":
         diagnoseSeconds = 10
         if let n = args.first.flatMap(Double.init) { diagnoseSeconds = n; args.removeFirst() }
+    case "--mt-probe": mtProbe = true
+    case "--skip-reenumerate": mtOptions.reenumerate = false
+    case "--mt-sequence":
+        let v = next()
+        guard MultitouchSequence(rawValue: v) != nil else { print("Unbekannte Sequenz: \(v)"); exit(1) }
+        settings.mtSequence = v
     case "--no-seize": settings.seize = false
     case "--no-suppress": settings.suppressSystemPointer = false
     case "--seize-touch-only": settings.seizeTouchOnly = true
@@ -129,6 +142,31 @@ if let secs = diagnoseSeconds {
                                         bundle: URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()) { print(l) }
     let probe = HIDProbe(vid: settings.vid ?? HIDProbe.anmiteVID, pid: settings.pid ?? HIDProbe.anmitePID) { print($0) }
     probe.run(seconds: secs) { s in exit(s.interfaces == 0 ? 4 : (s.reports == 0 ? 5 : 0)) }
+    RunLoop.main.run()
+}
+
+if mtProbe {
+    print("Eingabeüberwachung: \(Permissions.inputMonitoringState)")
+    if !Permissions.inputMonitoring { Permissions.requestInputMonitoring() }
+    let svc = TouchService(settings: settings)
+    svc.log = { print($0) }
+    svc.start()
+    guard svc.status.running else { print("❌ Touch-Dienst startet nicht"); exit(2) }
+    svc.muted = true
+    print("Gleich geht es los: bitte ca. 40 s lang immer wieder mit 2 Fingern auf den Anmite tippen/wischen.")
+    var experiment: MultitouchExperiment?
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+        let e = MultitouchExperiment(service: svc, options: mtOptions) { print($0) }
+        experiment = e
+        e.run { seq in
+            if let seq = seq {
+                print("Sequenz: \(seq.rawValue) – in der App wird sie über das Menü gespeichert; im CLI: --mt-sequence \(seq.rawValue)")
+            }
+            svc.stop()
+            exit(seq == nil ? 6 : 0)
+        }
+    }
+    withExtendedLifetime(experiment) {}
     RunLoop.main.run()
 }
 

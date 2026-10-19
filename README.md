@@ -125,6 +125,18 @@ Klappt ein Versuch, läuft der Multitouch-Pfad und die Maus-Schnittstelle wird n
 sonst bleibt es bei Single-Touch und das Menü zeigt „Single-Touch (Gerät im Mausmodus)“. Alle Versuche stehen mit
 Return-Codes und Feature-Inhalten in der Diagnose.
 
+**Multitouch-Experimente** (Menü › „Multitouch-Experimente starten …“, Terminal `touchbridge --mt-probe`
+[`--skip-reenumerate`]): fünf Wege nacheinander, nach jedem 3 s Warten auf Report 13 (dabei mit 2 Fingern tippen):
+a) GetReport Input 13/7 (Linux-Init), b) Feature 0x0A/0x21 lesen + Input Mode 2 über IOHID, c) die Linux-Sequenz
+(SET_IDLE(0) je Interface, GET_REPORT 0x0A, GET/SET_REPORT 0x21) als direkte USB-Control-Requests (IOUSBLib, ohne
+Entitlement), c') dieselbe über den Interface-Client, d) USB-Neu-Enumeration und sofort danach die Linux-Sequenz.
+Der Vendor-Kanal (0xFF0A) wird nur gelesen. Die erfolgreiche Sequenz wird gespeichert und beim Verbinden automatisch
+angewendet (Terminal: `--mt-sequence NAME`). Das Protokoll landet in der Zwischenablage und als
+„TouchBridge-MT-Experimente.txt“ auf dem Schreibtisch.
+
+Touch-Ziel ist immer der Anmite (Bildschirmname „ANMITE“/„A140W05T“), auch gegen eine gespeicherte Bildschirmwahl;
+der integrierte Bildschirm wird nie automatisch Touch-Ziel.
+
 **Exklusiv nur Touch-Schnittstelle** (Menü, Terminal `--seize-touch-only`) ist eine Testoption: nur der Digitizer wird
 exklusiv übernommen, Maus/Vendor nicht.
 

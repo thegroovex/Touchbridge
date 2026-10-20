@@ -37,12 +37,12 @@ public enum Scale: String, Codable, CaseIterable {
 
     public var title: String {
         switch self {
-        case .chromatic: return "Chromatisch"
-        case .major: return "Dur"
-        case .minor: return "Moll"
-        case .pentatonic: return "Pentatonik (Dur)"
-        case .minorPentatonic: return "Pentatonik (Moll)"
-        case .dorian: return "Dorisch"
+        case .chromatic: return L("Chromatic", "Chromatisch")
+        case .major: return L("Major", "Dur")
+        case .minor: return L("Minor", "Moll")
+        case .pentatonic: return L("Pentatonic (major)", "Pentatonik (Dur)")
+        case .minorPentatonic: return L("Pentatonic (minor)", "Pentatonik (Moll)")
+        case .dorian: return L("Dorian", "Dorisch")
         case .blues: return "Blues"
         }
     }
@@ -119,9 +119,9 @@ public enum MIDILayoutPreset: String, Codable, CaseIterable {
 
     public var title: String {
         switch self {
-        case .mixer: return "Mixer (8 Fader + 8 Pads)"
-        case .keyboard: return "MPE-Keyboard (2 Reihen)"
-        case .performance: return "Performance (4 Fader, XY, 8 Pads)"
+        case .mixer: return L("Mixer (8 faders + 8 pads)", "Mixer (8 Fader + 8 Pads)")
+        case .keyboard: return L("MPE keyboard (2 rows)", "MPE-Keyboard (2 Reihen)")
+        case .performance: return L("Performance (4 faders, XY, 8 pads)", "Performance (4 Fader, XY, 8 Pads)")
         }
     }
 

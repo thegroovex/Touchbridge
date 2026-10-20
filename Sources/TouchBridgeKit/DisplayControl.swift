@@ -17,9 +17,9 @@ public final class DisplayControl {
         }
         public var title: String {
             switch self {
-            case .brightness: return "Helligkeit"
-            case .contrast: return "Kontrast"
-            case .volume: return "Lautstärke"
+            case .brightness: return L("Brightness", "Helligkeit")
+            case .contrast: return L("Contrast", "Kontrast")
+            case .volume: return L("Volume", "Lautstärke")
             }
         }
     }

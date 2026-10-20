@@ -41,7 +41,7 @@ final class SystemChecksTests: XCTestCase {
         // Exklusiv-Fehler ist kein Berechtigungsproblem
         XCTAssertEqual(InputMonitoringState.evaluate(check: .granted, openRCs: [HIDReturnCode.exclusiveAccess], reports: 0, asked: true), .granted)
         XCTAssertNil(PermissionTexts.accessibility(trusted: true, asked: true))
-        XCTAssertTrue(PermissionTexts.accessibility(trusted: false, asked: true)!.contains("veraltet"))
+        XCTAssertTrue(PermissionTexts.accessibility(trusted: false, asked: true)!.contains("Stale entry"))
     }
 
     func testSigningPolicy() {
@@ -81,8 +81,8 @@ final class SystemChecksTests: XCTestCase {
         let s = InterfaceStatus.summary([InterfaceStatus(registryID: 3, role: .vendor, exclusive: true),
                                          InterfaceStatus(registryID: 1, role: .mouse, exclusive: false),
                                          InterfaceStatus(registryID: 2, role: .touch, exclusive: true)])
-        XCTAssertEqual(s, "3 Schnittstellen: Touch exklusiv, Maus NICHT exklusiv, Vendor exklusiv")
-        XCTAssertEqual(InterfaceStatus.summary([]), "keine Schnittstelle offen")
+        XCTAssertEqual(s, "3 interfaces: Touch exclusive, Mouse NOT exclusive, Vendor exclusive")
+        XCTAssertEqual(InterfaceStatus.summary([]), "no interface open")
     }
 
     /// Nachbau des ioreg-Befunds am Gerät: drei Interfaces, A doppelt von TouchBridge geöffnet, C mit WindowServer-Event-Pfad.

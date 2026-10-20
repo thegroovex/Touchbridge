@@ -115,11 +115,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if let r = r {
                     if interactive || SettingsStore.skippedVersion != r.versionString { self.offerUpdate(r) }
                 } else if interactive {
-                    self.alert("Kein Update", "TouchBridge \(Updater.currentVersion) ist aktuell.")
+                    self.alert(L("No update", "Kein Update"), L("TouchBridge \(Updater.currentVersion) is up to date.", "TouchBridge \(Updater.currentVersion) ist aktuell."))
                 }
             case .failure(let e):
                 self.appendLog("⚠️  Update-Prüfung: \(e.localizedDescription)")
-                if interactive { self.alert("Update-Prüfung fehlgeschlagen", e.localizedDescription) }
+                if interactive { self.alert(L("Update check failed", "Update-Prüfung fehlgeschlagen"), e.localizedDescription) }
             }
         }
     }
@@ -129,13 +129,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func offerUpdate(_ r: ReleaseInfo) {
         NSApp.activate(ignoringOtherApps: true)
         let a = NSAlert()
-        a.messageText = "TouchBridge \(r.versionString) ist verfügbar" + (r.prerelease ? " (Vorabversion)" : "")
+        a.messageText = L("TouchBridge \(r.versionString) is available", "TouchBridge \(r.versionString) ist verfügbar") + (r.prerelease ? L(" (pre-release)", " (Vorabversion)") : "")
         var notes = (r.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if notes.count > 1500 { notes = String(notes.prefix(1500)) + " …" }
-        a.informativeText = "Installiert: \(Updater.currentVersion)\n\n" + (notes.isEmpty ? "Keine Release-Notes." : notes)
-        a.addButton(withTitle: "Jetzt installieren")
-        a.addButton(withTitle: "Später")
-        a.addButton(withTitle: "Diese Version überspringen")
+        a.informativeText = L("Installed: \(Updater.currentVersion)\n\n", "Installiert: \(Updater.currentVersion)\n\n") + (notes.isEmpty ? L("No release notes.", "Keine Release-Notes.") : notes)
+        a.addButton(withTitle: L("Install now", "Jetzt installieren"))
+        a.addButton(withTitle: L("Later", "Später"))
+        a.addButton(withTitle: L("Skip this version", "Diese Version überspringen"))
         switch a.runModal() {
         case .alertFirstButtonReturn: install(r)
         case .alertThirdButtonReturn:
@@ -164,7 +164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                         self.updateBusy = false
                         self.statusItem.button?.title = ""
                         self.service.start()
-                        self.alert("Update fehlgeschlagen", error.localizedDescription)
+                        self.alert(L("Update failed", "Update fehlgeschlagen"), error.localizedDescription)
                     }
                 }
             } catch {
@@ -172,7 +172,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self.updateBusy = false
                     self.statusItem.button?.title = ""
                     self.updateIcon()
-                    self.alert("Update fehlgeschlagen", error.localizedDescription)
+                    self.alert(L("Update failed", "Update fehlgeschlagen"), error.localizedDescription)
                 }
             }
         }
@@ -183,16 +183,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func updatesMenu() -> NSMenu {
         let m = NSMenu()
-        m.addItem(action(updateBusy ? "Suche läuft …" : "Nach Updates suchen …", #selector(checkForUpdatesAction), enabled: !updateBusy))
-        m.addItem(toggle("Automatisch prüfen (beim Start und täglich)", SettingsStore.autoUpdateCheck, #selector(toggleAutoUpdate)))
-        m.addItem(toggle("Vorabversionen einbeziehen", SettingsStore.includePrereleases, #selector(togglePrereleases)))
+        m.addItem(action(updateBusy ? L("Checking …", "Suche läuft …") : L("Check for updates …", "Nach Updates suchen …"), #selector(checkForUpdatesAction), enabled: !updateBusy))
+        m.addItem(toggle(L("Check automatically (at launch and daily)", "Automatisch prüfen (beim Start und täglich)"), SettingsStore.autoUpdateCheck, #selector(toggleAutoUpdate)))
+        m.addItem(toggle(L("Include pre-releases", "Vorabversionen einbeziehen"), SettingsStore.includePrereleases, #selector(togglePrereleases)))
         if let d = SettingsStore.lastUpdateCheck {
             let f = DateFormatter(); f.dateStyle = .short; f.timeStyle = .short
-            let i = NSMenuItem(title: "Zuletzt geprüft: " + f.string(from: d), action: nil, keyEquivalent: "")
+            let i = NSMenuItem(title: L("Last checked: ", "Zuletzt geprüft: ") + f.string(from: d), action: nil, keyEquivalent: "")
             i.isEnabled = false
             m.addItem(i)
         }
-        let v = NSMenuItem(title: "Installiert: \(Updater.currentVersion)", action: nil, keyEquivalent: "")
+        let v = NSMenuItem(title: L("Installed: \(Updater.currentVersion)", "Installiert: \(Updater.currentVersion)"), action: nil, keyEquivalent: "")
         v.isEnabled = false
         m.addItem(v)
         return m
@@ -289,17 +289,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         // Punkt in der Menüleiste, wenn ein Update bereitsteht
         if !updateBusy && !diagnosing { button.title = availableUpdate != nil ? "•" : "" }
-        button.toolTip = "TouchBridge – " + statusText + (availableUpdate.map { " – Update \($0.versionString) verfügbar" } ?? "")
+        button.toolTip = "TouchBridge – " + statusText + (availableUpdate.map { L(" – update \($0.versionString) available", " – Update \($0.versionString) verfügbar") } ?? "")
     }
 
     private var statusText: String {
         let st = service.status
-        if !settings.enabled { return "Touch aus" }
+        if !settings.enabled { return L("Touch off", "Touch aus") }
         let im = service.inputMonitoringState
         if im.isProblem { return im.statusText }
         if let e = st.lastError { return e }
-        if st.devices.isEmpty { return "Touch-Monitor nicht angeschlossen" }
-        return st.devices.joined(separator: ", ") + (st.exclusive ? " – exklusiv" : " – nicht exklusiv")
+        if st.devices.isEmpty { return L("Touch monitor not connected", "Touch-Monitor nicht angeschlossen") }
+        return st.devices.joined(separator: ", ") + (st.exclusive ? L(" – exclusive", " – exklusiv") : L(" – not exclusive", " – nicht exklusiv"))
             + (st.source == .singleTouchPointer ? " – " + st.source.title : "")
             + (settings.mode == .midi ? " – MIDI" : "")
     }
@@ -353,70 +353,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         st.isEnabled = false
         menu.addItem(st)
         if let u = availableUpdate {
-            let i = action("● Update auf \(u.versionString) verfügbar …", #selector(showAvailableUpdate))
+            let i = action(L("● Update to \(u.versionString) available …", "● Update auf \(u.versionString) verfügbar …"), #selector(showAvailableUpdate))
             i.attributedTitle = NSAttributedString(string: i.title, attributes: [.foregroundColor: NSColor.systemBlue,
                                                                                  .font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)])
             menu.addItem(i)
         }
         let im = service.inputMonitoringState
         if im.isProblem {
-            menu.addItem(warning(im == .notDetermined ? "⚠️ Eingabeüberwachung noch nicht erlaubt – es kommen keine Touch-Daten an"
-                                                      : "⚠️ \(im.statusText) – es kommen keine Touch-Daten an", color: .systemRed, bold: true))
+            menu.addItem(warning(im == .notDetermined ? L("⚠️ Input Monitoring not allowed yet – no touch data arrives", "⚠️ Eingabeüberwachung noch nicht erlaubt – es kommen keine Touch-Daten an")
+                                                      : L("⚠️ \(im.statusText) – no touch data arrives", "⚠️ \(im.statusText) – es kommen keine Touch-Daten an"), color: .systemRed, bold: true))
             if im.suggestReset { menu.addItem(warning("   " + PermissionTexts.staleHint, color: .secondaryLabelColor)) }
-            menu.addItem(action("Systemeinstellungen › Eingabeüberwachung öffnen …", #selector(openInputMonitoring)))
-            if im.suggestReset { menu.addItem(action("Berechtigungen zurücksetzen …", #selector(resetPermissions))) }
+            menu.addItem(action(L("Open System Settings › Input Monitoring …", "Systemeinstellungen › Eingabeüberwachung öffnen …"), #selector(openInputMonitoring)))
+            if im.suggestReset { menu.addItem(action(L("Reset permissions …", "Berechtigungen zurücksetzen …"), #selector(resetPermissions))) }
         }
         if let ax = PermissionTexts.accessibility(trusted: Permissions.accessibility, asked: Permissions.askedAccessibility),
            settings.mode == .gestures {
             menu.addItem(warning("⚠️ " + ax, color: .systemOrange))
-            if !im.suggestReset && Permissions.askedAccessibility { menu.addItem(action("Berechtigungen zurücksetzen …", #selector(resetPermissions))) }
+            if !im.suggestReset && Permissions.askedAccessibility { menu.addItem(action(L("Reset permissions …", "Berechtigungen zurücksetzen …"), #selector(resetPermissions))) }
         }
         if settings.enabled, !service.status.interfaces.isEmpty {
             menu.addItem(warning(InterfaceStatus.summary(service.status.interfaces), color: .secondaryLabelColor))
             menu.addItem(warning("Reports: " + service.reportSummary, color: .secondaryLabelColor))
-            menu.addItem(warning("Quelle: " + service.touchSource.title, color: .secondaryLabelColor))
+            menu.addItem(warning(L("Source: ", "Quelle: ") + service.touchSource.title, color: .secondaryLabelColor))
         }
         if settings.enabled, let e = service.status.seizeError, !service.status.interfaces.isEmpty {
-            menu.addItem(warning("⚠️ Nicht exklusiv – \(e) – neuer Versuch alle 2 s", color: .systemOrange))
+            menu.addItem(warning(L("⚠️ Not exclusive – \(e) – retrying every 2 s", "⚠️ Nicht exklusiv – \(e) – neuer Versuch alle 2 s"), color: .systemOrange))
             if service.status.suppressing {
-                menu.addItem(warning("   Systemzeiger wird per Event-Tap unterdrückt", color: .secondaryLabelColor))
+                menu.addItem(warning(L("   System pointer suppressed via event tap", "   Systemzeiger wird per Event-Tap unterdrückt"), color: .secondaryLabelColor))
             }
         }
         if service.status.legacyAgent || SystemCheck.legacyAgentFilePresent {
-            menu.addItem(warning("⚠️ Alter LaunchAgent com.groovex.touchbridge (v0.1) gefunden", color: .systemOrange))
-            menu.addItem(action("Alten LaunchAgent entfernen", #selector(removeLegacyAgent)))
+            menu.addItem(warning(L("⚠️ Old LaunchAgent com.groovex.touchbridge (v0.1) found", "⚠️ Alter LaunchAgent com.groovex.touchbridge (v0.1) gefunden"), color: .systemOrange))
+            menu.addItem(action(L("Remove old LaunchAgent", "Alten LaunchAgent entfernen"), #selector(removeLegacyAgent)))
         }
-        menu.addItem(toggle("Touch aktiv", settings.enabled, #selector(toggleEnabled), key: "t"))
+        menu.addItem(toggle(L("Touch enabled", "Touch aktiv"), settings.enabled, #selector(toggleEnabled), key: "t"))
         menu.addItem(.separator())
 
         // Modus
-        menu.addItem(sectionHeader("Modus"))
+        menu.addItem(sectionHeader(L("Mode", "Modus")))
         for (i, m) in InputMode.allCases.enumerated() {
             menu.addItem(toggle(m.title, settings.mode == m, #selector(selectMode(_:)), tag: i))
         }
-        menu.addItem(submenu("MIDI-Einstellungen", midiMenu()))
+        menu.addItem(submenu(L("MIDI settings", "MIDI-Einstellungen"), midiMenu()))
         menu.addItem(.separator())
 
         // Bild
-        menu.addItem(sectionHeader("Bild"))
+        menu.addItem(sectionHeader(L("Picture", "Bild")))
         if let ctl = control {
             if ctl.hasDDC {
                 for f in DisplayControl.Feature.allCases {
                     let v = ddcValues[f]
                     let supported = v != -1
-                    let view = SliderItemView(title: f.title + (supported ? "" : " (nicht unterstützt)"),
+                    let view = SliderItemView(title: f.title + (supported ? "" : L(" (not supported)", " (nicht unterstützt)")),
                                               symbol: symbol(for: f), value: max(0, v ?? 50), enabled: supported && v != nil)
                     view.onChange = { [weak self] p in self?.ddcValues[f] = p; ctl.set(f, percent: p) }
                     let item = NSMenuItem(); item.view = view
                     menu.addItem(item)
                 }
             } else {
-                let note = NSMenuItem(title: ctl.probing ? "DDC wird geprüft …" : "Monitor antwortet nicht auf DDC – Software-Dimmen",
+                let note = NSMenuItem(title: ctl.probing ? L("Checking DDC …", "DDC wird geprüft …") : L("Monitor does not answer DDC – software dimming", "Monitor antwortet nicht auf DDC – Software-Dimmen"),
                                       action: nil, keyEquivalent: "")
                 note.isEnabled = false
                 menu.addItem(note)
             }
-            let swView = SliderItemView(title: ctl.hasDDC ? "Zusätzlich abdunkeln (Software)" : "Helligkeit (Software)",
+            let swView = SliderItemView(title: ctl.hasDDC ? L("Extra dimming (software)", "Zusätzlich abdunkeln (Software)") : L("Brightness (software)", "Helligkeit (Software)"),
                                         symbol: "moon", value: Int((ctl.softwareBrightness * 100).rounded()))
             swView.slider.minValue = 20
             swView.onChange = { p in
@@ -425,9 +425,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             let swItem = NSMenuItem(); swItem.view = swView
             menu.addItem(swItem)
-            menu.addItem(action(ctl.probing ? "DDC wird geprüft …" : "DDC erneut prüfen", #selector(reprobeDDCAction), enabled: !ctl.probing))
+            menu.addItem(action(ctl.probing ? L("Checking DDC …", "DDC wird geprüft …") : L("Check DDC again", "DDC erneut prüfen"), #selector(reprobeDDCAction), enabled: !ctl.probing))
         } else {
-            let wait = NSMenuItem(title: "Bildschirm wird abgefragt …", action: nil, keyEquivalent: "")
+            let wait = NSMenuItem(title: L("Reading display …", "Bildschirm wird abgefragt …"), action: nil, keyEquivalent: "")
             wait.isEnabled = false
             menu.addItem(wait)
         }
@@ -435,36 +435,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Touch-Einstellungen
         menu.addItem(sectionHeader("Touch"))
-        menu.addItem(submenu("Bildschirm", displayMenu()))
-        menu.addItem(submenu("Ausrichtung", orientationMenu()))
-        menu.addItem(submenu("Scrollen", scrollMenu()))
-        menu.addItem(toggle("1-Finger-Ziehen scrollt (statt Zeiger/Ziehen)", settings.oneFingerScroll, #selector(toggleOneFingerScroll)))
-        menu.addItem(toggle("Pinch = Trackpad-Zoom (aus: Cmd + / Cmd −)", settings.nativeZoom, #selector(toggleNativeZoom)))
-        menu.addItem(toggle("Exklusiv übernehmen (empfohlen)", settings.seize, #selector(toggleSeize)))
-        let touchOnly = toggle("Exklusiv nur Touch-Schnittstelle (Test: Maus/Vendor nicht exklusiv)", settings.seizeTouchOnly,
+        menu.addItem(submenu(L("Screen", "Bildschirm"), displayMenu()))
+        menu.addItem(submenu(L("Orientation", "Ausrichtung"), orientationMenu()))
+        menu.addItem(submenu(L("Scrolling", "Scrollen"), scrollMenu()))
+        menu.addItem(toggle(L("1-finger drag scrolls (instead of pointer/drag)", "1-Finger-Ziehen scrollt (statt Zeiger/Ziehen)"), settings.oneFingerScroll, #selector(toggleOneFingerScroll)))
+        menu.addItem(toggle(L("Pinch = trackpad zoom (off: Cmd + / Cmd −)", "Pinch = Trackpad-Zoom (aus: Cmd + / Cmd −)"), settings.nativeZoom, #selector(toggleNativeZoom)))
+        menu.addItem(toggle(L("Exclusive access (recommended)", "Exklusiv übernehmen (empfohlen)"), settings.seize, #selector(toggleSeize)))
+        let touchOnly = toggle(L("Exclusive touch interface only (test: mouse/vendor not exclusive)", "Exklusiv nur Touch-Schnittstelle (Test: Maus/Vendor nicht exklusiv)"), settings.seizeTouchOnly,
                                #selector(toggleSeizeTouchOnly))
         touchOnly.isEnabled = settings.seize
         menu.addItem(touchOnly)
-        menu.addItem(toggle("Systemzeiger vom Touch unterdrücken (wenn nicht exklusiv)", settings.suppressSystemPointer, #selector(toggleSuppress)))
+        menu.addItem(toggle(L("Suppress system pointer from touch (when not exclusive)", "Systemzeiger vom Touch unterdrücken (wenn nicht exklusiv)"), settings.suppressSystemPointer, #selector(toggleSuppress)))
         menu.addItem(.separator())
 
         // System
-        menu.addItem(submenu("Berechtigungen", permissionsMenu()))
+        menu.addItem(submenu(L("Permissions", "Berechtigungen"), permissionsMenu()))
         if #available(macOS 13.0, *) {
-            menu.addItem(toggle("Beim Anmelden starten", SMAppService.mainApp.status == .enabled, #selector(toggleLogin)))
+            menu.addItem(toggle(L("Launch at login", "Beim Anmelden starten"), SMAppService.mainApp.status == .enabled, #selector(toggleLogin)))
         }
-        menu.addItem(action(diagnosing ? "Diagnose läuft – Bildschirm berühren …" : "Diagnose aufzeichnen (10 s Touch)", #selector(runDiagnosis), enabled: !diagnosing))
-        menu.addItem(action(experiment != nil ? "Multitouch-Experimente laufen – mit 2 Fingern tippen …" : "Multitouch-Experimente starten …",
+        menu.addItem(action(diagnosing ? L("Recording – touch the screen …", "Diagnose läuft – Bildschirm berühren …") : L("Record diagnostics (10 s touch)", "Diagnose aufzeichnen (10 s Touch)"), #selector(runDiagnosis), enabled: !diagnosing))
+        menu.addItem(action(experiment != nil ? L("Multitouch experiments running – tap with 2 fingers …", "Multitouch-Experimente laufen – mit 2 Fingern tippen …") : L("Start multitouch experiments …", "Multitouch-Experimente starten …"),
                             #selector(runMTExperiments), enabled: experiment == nil && !diagnosing))
         if let seq = settings.multitouchSequence {
-            menu.addItem(warning("Gespeicherte Multitouch-Sequenz: \(seq.title)", color: .secondaryLabelColor))
-            menu.addItem(action("Gespeicherte Multitouch-Sequenz vergessen", #selector(forgetMTSequence)))
+            menu.addItem(warning(L("Saved multitouch sequence: \(seq.title)", "Gespeicherte Multitouch-Sequenz: \(seq.title)"), color: .secondaryLabelColor))
+            menu.addItem(action(L("Forget saved multitouch sequence", "Gespeicherte Multitouch-Sequenz vergessen"), #selector(forgetMTSequence)))
         }
-        menu.addItem(action("Kommandozeilen-Tool installieren …", #selector(installCLI)))
+        menu.addItem(action(L("Install command line tool …", "Kommandozeilen-Tool installieren …"), #selector(installCLI)))
         menu.addItem(submenu("Updates", updatesMenu()))
-        menu.addItem(action("Hilfe", #selector(openHelp)))
+        let lang = NSMenu()
+        for (i, l) in AppLanguage.allCases.enumerated() {
+            lang.addItem(toggle(l.title, L10n.language == l, #selector(selectLanguage(_:)), tag: i))
+        }
+        menu.addItem(submenu(L("Language", "Sprache"), lang))
+        menu.addItem(action(L("Help", "Hilfe"), #selector(openHelp)))
         menu.addItem(.separator())
-        menu.addItem(action("TouchBridge beenden", #selector(quit), key: "q"))
+        menu.addItem(action(L("Quit TouchBridge", "TouchBridge beenden"), #selector(quit), key: "q"))
     }
 
     private func symbol(for f: DisplayControl.Feature) -> String {
@@ -517,7 +522,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func displayMenu() -> NSMenu {
         let m = NSMenu()
         let current = Displays.resolve(settings.displayID)
-        m.addItem(toggle("Automatisch (erster externer)", settings.displayID == nil, #selector(selectDisplay(_:)), tag: 0))
+        m.addItem(toggle(L("Automatic (first external)", "Automatisch (erster externer)"), settings.displayID == nil, #selector(selectDisplay(_:)), tag: 0))
         for d in Displays.all() {
             let i = toggle(d.summary, settings.displayID == d.id, #selector(selectDisplay(_:)), tag: Int(d.id))
             if settings.displayID == nil && d.id == current { i.state = .mixed }
@@ -529,19 +534,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func orientationMenu() -> NSMenu {
         let m = NSMenu()
         for r in [0, 90, 180, 270] {
-            m.addItem(toggle(r == 0 ? "Normal" : "\(r)° gedreht", settings.rotation == r, #selector(selectRotation(_:)), tag: r))
+            m.addItem(toggle(r == 0 ? "Normal" : L("Rotated \(r)°", "\(r)° gedreht"), settings.rotation == r, #selector(selectRotation(_:)), tag: r))
         }
         m.addItem(.separator())
-        m.addItem(toggle("Horizontal spiegeln", settings.flipX, #selector(toggleFlipX)))
-        m.addItem(toggle("Vertikal spiegeln", settings.flipY, #selector(toggleFlipY)))
+        m.addItem(toggle(L("Flip horizontally", "Horizontal spiegeln"), settings.flipX, #selector(toggleFlipX)))
+        m.addItem(toggle(L("Flip vertically", "Vertikal spiegeln"), settings.flipY, #selector(toggleFlipY)))
         return m
     }
 
     private func scrollMenu() -> NSMenu {
         let m = NSMenu()
-        m.addItem(toggle("Richtung umkehren", settings.invertScroll, #selector(toggleInvert)))
+        m.addItem(toggle(L("Reverse direction", "Richtung umkehren"), settings.invertScroll, #selector(toggleInvert)))
         m.addItem(.separator())
-        for (name, g) in [("Langsam", 0.6), ("Normal", 1.0), ("Schnell", 1.6), ("Sehr schnell", 2.4)] {
+        for (name, g) in [(L("Slow", "Langsam"), 0.6), ("Normal", 1.0), (L("Fast", "Schnell"), 1.6), (L("Very fast", "Sehr schnell"), 2.4)] {
             m.addItem(toggle(name, abs(settings.scrollGain - g) < 0.01, #selector(selectGain(_:)), tag: Int(g * 10)))
         }
         return m
@@ -554,11 +559,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             layout.addItem(toggle(p.title, settings.midiLayout == p, #selector(selectLayout(_:)), tag: i))
         }
         m.addItem(submenu("Layout: " + settings.midiLayout.title, layout))
-        m.addItem(toggle("MPE (Kanal 1 Master, 2–16 pro Note)", settings.mpe, #selector(toggleMPE)))
+        m.addItem(toggle(L("MPE (channel 1 master, 2–16 per note)", "MPE (Kanal 1 Master, 2–16 pro Note)"), settings.mpe, #selector(toggleMPE)))
 
         let ch = NSMenu()
-        for c in 1...16 { ch.addItem(toggle("Kanal \(c)", settings.midiChannel == c, #selector(selectChannel(_:)), tag: c)) }
-        let chItem = submenu("MIDI-Kanal: \(settings.midiChannel)" + (settings.mpe ? " (nur ohne MPE)" : ""), ch)
+        for c in 1...16 { ch.addItem(toggle(L("Channel \(c)", "Kanal \(c)"), settings.midiChannel == c, #selector(selectChannel(_:)), tag: c)) }
+        let chItem = submenu(L("MIDI channel: \(settings.midiChannel)", "MIDI-Kanal: \(settings.midiChannel)") + (settings.mpe ? L(" (only without MPE)", " (nur ohne MPE)") : ""), ch)
         m.addItem(chItem)
 
         let base = NSMenu()
@@ -566,24 +571,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             base.addItem(toggle(midiNoteName(n), settings.baseNote == n, #selector(selectBaseNote(_:)), tag: n))
         }
         base.addItem(.separator())
-        base.addItem(action("Einen Halbton höher", #selector(baseNoteUp), enabled: settings.baseNote < 108))
-        base.addItem(action("Einen Halbton tiefer", #selector(baseNoteDown), enabled: settings.baseNote > 0))
-        m.addItem(submenu("Grundnote: " + midiNoteName(settings.baseNote), base))
+        base.addItem(action(L("One semitone up", "Einen Halbton höher"), #selector(baseNoteUp), enabled: settings.baseNote < 108))
+        base.addItem(action(L("One semitone down", "Einen Halbton tiefer"), #selector(baseNoteDown), enabled: settings.baseNote > 0))
+        m.addItem(submenu(L("Base note: ", "Grundnote: ") + midiNoteName(settings.baseNote), base))
 
         let sc = NSMenu()
         for (i, s) in Scale.allCases.enumerated() {
             sc.addItem(toggle(s.title, settings.scale == s, #selector(selectScale(_:)), tag: i))
         }
-        m.addItem(submenu("Skala (Keyboard): " + settings.scale.title, sc))
+        m.addItem(submenu(L("Scale (keyboard): ", "Skala (Keyboard): ") + settings.scale.title, sc))
 
         let br = NSMenu()
         for r in [2, 12, 24, 48] {
-            br.addItem(toggle("±\(r) Halbtöne", settings.bendRange == r, #selector(selectBendRange(_:)), tag: r))
+            br.addItem(toggle(L("±\(r) semitones", "±\(r) Halbtöne"), settings.bendRange == r, #selector(selectBendRange(_:)), tag: r))
         }
-        m.addItem(submenu("Pitch-Bend-Bereich (MPE): ±\(settings.bendRange)", br))
+        m.addItem(submenu(L("Pitch bend range (MPE): ±\(settings.bendRange)", "Pitch-Bend-Bereich (MPE): ±\(settings.bendRange)"), br))
         m.addItem(.separator())
-        m.addItem(toggle("Layout auf dem Touch-Bildschirm anzeigen", settings.showOverlay, #selector(toggleOverlay)))
-        let port = NSMenuItem(title: "MIDI-Port: „TouchBridge“", action: nil, keyEquivalent: "")
+        m.addItem(toggle(L("Show layout on the touchscreen", "Layout auf dem Touch-Bildschirm anzeigen"), settings.showOverlay, #selector(toggleOverlay)))
+        let port = NSMenuItem(title: L("MIDI port: \"TouchBridge\"", "MIDI-Port: „TouchBridge“"), action: nil, keyEquivalent: "")
         port.isEnabled = false
         m.addItem(port)
         return m
@@ -591,17 +596,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func permissionsMenu() -> NSMenu {
         let m = NSMenu()
-        m.addItem(toggle(PermissionTexts.accessibilityName + (Permissions.accessibility ? "" : " – fehlt"),
+        m.addItem(toggle(PermissionTexts.accessibilityName + (Permissions.accessibility ? "" : L(" – missing", " – fehlt")),
                          Permissions.accessibility, #selector(openAccessibility)))
-        m.addItem(toggle("Eingabeüberwachung" + (Permissions.inputMonitoring ? "" : " – fehlt"),
+        m.addItem(toggle(L("Input Monitoring", "Eingabeüberwachung") + (Permissions.inputMonitoring ? "" : L(" – missing", " – fehlt")),
                          Permissions.inputMonitoring, #selector(openInputMonitoring)))
         let im = service.inputMonitoringState
-        let state = NSMenuItem(title: "Wirkung: " + im.statusText, action: nil, keyEquivalent: "")
+        let state = NSMenuItem(title: L("Effect: ", "Wirkung: ") + im.statusText, action: nil, keyEquivalent: "")
         state.isEnabled = false
         m.addItem(state)
         m.addItem(.separator())
-        m.addItem(action("Berechtigungen zurücksetzen …", #selector(resetPermissions)))
-        m.addItem(action("Touch neu starten", #selector(restartService)))
+        m.addItem(action(L("Reset permissions …", "Berechtigungen zurücksetzen …"), #selector(resetPermissions)))
+        m.addItem(action(L("Restart touch", "Touch neu starten"), #selector(restartService)))
         return m
     }
 
@@ -612,6 +617,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleSeizeTouchOnly() { settings.seizeTouchOnly.toggle() }
     @objc private func toggleOneFingerScroll() { settings.oneFingerScroll.toggle() }
     @objc private func toggleNativeZoom() { settings.nativeZoom.toggle() }
+    @objc private func selectLanguage(_ sender: NSMenuItem) {
+        L10n.set(AppLanguage.allCases[sender.tag]); updateIcon()
+    }
     @objc private func toggleSuppress() { settings.suppressSystemPointer.toggle() }
     @objc private func toggleFlipX() { settings.flipX.toggle() }
     @objc private func toggleFlipY() { settings.flipY.toggle() }
@@ -644,7 +652,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if SMAppService.mainApp.status == .enabled { try SMAppService.mainApp.unregister() }
             else { try SMAppService.mainApp.register() }
         } catch {
-            alert("Autostart konnte nicht geändert werden", error.localizedDescription)
+            alert(L("Could not change launch at login", "Autostart konnte nicht geändert werden"), error.localizedDescription)
         }
     }
 
@@ -662,12 +670,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func resetPermissions() {
         NSApp.activate(ignoringOtherApps: true)
         let a = NSAlert()
-        a.messageText = "Berechtigungen zurücksetzen?"
-        a.informativeText = "TouchBridge setzt Eingabeüberwachung und \(PermissionTexts.accessibilityName) für sich zurück (tccutil reset) und fragt danach neu. "
+        a.messageText = L("Reset permissions?", "Berechtigungen zurücksetzen?")
+        a.informativeText = L10n.language == .english ? "TouchBridge resets Input Monitoring and \(PermissionTexts.accessibilityName) for itself (tccutil reset) and asks again. Then allow TouchBridge in both dialogs or in System Settings. Helps when TouchBridge is enabled there but the permission has no effect (stale entry from an earlier build)." : "TouchBridge setzt Eingabeüberwachung und \(PermissionTexts.accessibilityName) für sich zurück (tccutil reset) und fragt danach neu. "
             + "Erlaube TouchBridge anschließend in beiden Dialogen bzw. in den Systemeinstellungen. "
             + "Hilft, wenn TouchBridge dort aktiviert ist, die Berechtigung aber nicht greift (veralteter Eintrag eines früheren Builds)."
-        a.addButton(withTitle: "Zurücksetzen")
-        a.addButton(withTitle: "Abbrechen")
+        a.addButton(withTitle: L("Reset", "Zurücksetzen"))
+        a.addButton(withTitle: L("Cancel", "Abbrechen"))
         guard a.runModal() == .alertFirstButtonReturn else { return }
         for l in SystemCheck.resetPermissions() { appendLog("🔐 " + l) }
         Permissions.forgetAsked()
@@ -683,7 +691,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let log = SystemCheck.removeLegacyAgent()
         for l in log { appendLog("🧹 " + l) }
         restartService()
-        alert("Alter LaunchAgent", log.joined(separator: "\n"))
+        alert(L("Old LaunchAgent", "Alter LaunchAgent"), log.joined(separator: "\n"))
     }
 
     @objc private func openHelp() {
@@ -740,10 +748,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 let url = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
                     .appendingPathComponent("TouchBridge-Diagnose.txt")
                 try? text.write(to: url, atomically: true, encoding: .utf8)
-                let head = summary.interfaces == 0 ? "Kein Touch-Interface gefunden."
-                    : (summary.reports == 0 ? "Achtung: In 10 s kamen KEINE Touch-Reports an."
-                                            : "\(summary.reports) Touch-Reports empfangen.")
-                self.alert("Diagnose fertig", head + " In die Zwischenablage kopiert und als „TouchBridge-Diagnose.txt“ auf dem Schreibtisch gespeichert.")
+                let head = summary.interfaces == 0 ? L("No touch interface found.", "Kein Touch-Interface gefunden.")
+                    : (summary.reports == 0 ? L("Attention: NO touch reports arrived in 10 s.", "Achtung: In 10 s kamen KEINE Touch-Reports an.")
+                                            : L("\(summary.reports) touch reports received.", "\(summary.reports) Touch-Reports empfangen."))
+                self.alert(L("Diagnostics done", "Diagnose fertig"), head + L(" Copied to the clipboard and saved as \"TouchBridge-Diagnose.txt\" on the desktop.", " In die Zwischenablage kopiert und als „TouchBridge-Diagnose.txt“ auf dem Schreibtisch gespeichert."))
             }
             if let c = ctl { c.probe { _ in finish() } } else { finish() }
         }
@@ -753,19 +761,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Erfolgreiche Sequenz wird gespeichert und künftig beim Verbinden angewendet.
     @objc private func runMTExperiments() {
         guard service.status.running, settings.enabled else {
-            alert("Touch ist aus", "Bitte zuerst „Touch aktiv“ einschalten – die Experimente brauchen die geöffneten Schnittstellen."); return
+            alert(L("Touch is off", "Touch ist aus"), L("Please turn on \"Touch enabled\" first – the experiments need the open interfaces.", "Bitte zuerst „Touch aktiv“ einschalten – die Experimente brauchen die geöffneten Schnittstellen.")); return
         }
         NSApp.activate(ignoringOtherApps: true)
         let a = NSAlert()
-        a.messageText = "Multitouch-Experimente starten?"
-        a.informativeText = "TouchBridge probiert nacheinander 5 Wege, den Anmite in den Multitouch-Modus zu schalten "
+        a.messageText = L("Start multitouch experiments?", "Multitouch-Experimente starten?")
+        a.informativeText = L10n.language == .english ? "TouchBridge tries 5 ways in a row to switch the Anmite into multitouch mode (GetReport, feature reports, direct USB requests like Linux/Android, finally a short USB reconnect).\n\nAfter \"Start\", keep tapping and swiping with 2 fingers on the Anmite for about 40 seconds until \"Experiments done\" appears. No clicks are sent meanwhile.\n\nNothing is written to the vendor channel (read only). The log is copied to the clipboard and saved as \"TouchBridge-MT-Experimente.txt\" on the desktop." : "TouchBridge probiert nacheinander 5 Wege, den Anmite in den Multitouch-Modus zu schalten "
             + "(GetReport, Feature-Reports, direkte USB-Requests wie unter Linux/Android, zuletzt kurzes Neu-Verbinden des Touch-USB).\n\n"
             + "Bitte nach „Start“ ca. 40 Sekunden lang immer wieder mit 2 Fingern auf den Anmite tippen und wischen, "
             + "bis die Meldung „Experimente fertig“ erscheint. Klicks werden währenddessen nicht ausgelöst.\n\n"
             + "Am Vendor-Kanal wird nichts geschrieben (nur gelesen). Das Protokoll landet in der Zwischenablage und als "
             + "„TouchBridge-MT-Experimente.txt“ auf dem Schreibtisch."
         a.addButton(withTitle: "Start")
-        a.addButton(withTitle: "Abbrechen")
+        a.addButton(withTitle: L("Cancel", "Abbrechen"))
         guard a.runModal() == .alertFirstButtonReturn else { return }
         logLines.removeAll()
         appendLog("TouchBridge \(AppDelegate.version) – macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
@@ -784,10 +792,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let url = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("TouchBridge-MT-Experimente.txt")
             try? text.write(to: url, atomically: true, encoding: .utf8)
-            self.alert("Experimente fertig",
-                       (seq.map { "Multitouch aktiv mit „\($0.title)“ – gespeichert, wird künftig beim Verbinden angewendet." }
-                        ?? "Kein Weg brachte Multitouch – Single-Touch bleibt aktiv.")
-                       + " Protokoll in der Zwischenablage und auf dem Schreibtisch.")
+            self.alert(L("Experiments done", "Experimente fertig"),
+                       (seq.map { L("Multitouch active with \"\($0.title)\" – saved, applied on every connect.", "Multitouch aktiv mit „\($0.title)“ – gespeichert, wird künftig beim Verbinden angewendet.") }
+                        ?? L("No method enabled multitouch – single touch stays active.", "Kein Weg brachte Multitouch – Single-Touch bleibt aktiv."))
+                       + L(" Log copied to the clipboard and saved on the desktop.", " Protokoll in der Zwischenablage und auf dem Schreibtisch."))
         }
     }
 
@@ -797,7 +805,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func installCLI() {
         let cli = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/touchbridge").path
         guard FileManager.default.isExecutableFile(atPath: cli) else {
-            alert("Nicht gefunden", "Das Kommandozeilen-Tool fehlt im App-Bundle."); return
+            alert(L("Not found", "Nicht gefunden"), L("The command line tool is missing from the app bundle.", "Das Kommandozeilen-Tool fehlt im App-Bundle.")); return
         }
         let cmd = "mkdir -p /usr/local/bin && ln -sf '\(cli)' /usr/local/bin/touchbridge"
         let script = "do shell script \"\(cmd)\" with administrator privileges"
@@ -805,10 +813,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSAppleScript(source: script)?.executeAndReturnError(&err)
         if let e = err {
             if (e[NSAppleScript.errorNumber] as? Int) != -128 {
-                alert("Installation fehlgeschlagen", (e[NSAppleScript.errorMessage] as? String) ?? "\(e)")
+                alert(L("Installation failed", "Installation fehlgeschlagen"), (e[NSAppleScript.errorMessage] as? String) ?? "\(e)")
             }
         } else {
-            alert("Installiert", "Im Terminal steht jetzt „touchbridge“ bereit, z. B. touchbridge --dump.")
+            alert(L("Installed", "Installiert"), L("\"touchbridge\" is now available in Terminal, e.g. touchbridge --dump.", "Im Terminal steht jetzt „touchbridge“ bereit, z. B. touchbridge --dump."))
         }
     }
 

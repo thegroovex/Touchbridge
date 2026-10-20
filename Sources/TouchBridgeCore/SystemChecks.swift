@@ -88,11 +88,11 @@ public enum InputMonitoringState: Equatable {
 
     public var statusText: String {
         switch self {
-        case .working: return "Eingabeüberwachung wirksam (Reports kommen an)"
-        case .granted: return "Eingabeüberwachung erteilt"
-        case .notDetermined: return "Eingabeüberwachung noch nicht erlaubt"
-        case .missing: return "Keine Berechtigung (Eingabeüberwachung)"
-        case .stale: return "Eingabeüberwachung erteilt, greift aber nicht"
+        case .working: return L("Input Monitoring working (reports arriving)", "Eingabeüberwachung wirksam (Reports kommen an)")
+        case .granted: return L("Input Monitoring granted", "Eingabeüberwachung erteilt")
+        case .notDetermined: return L("Input Monitoring not allowed yet", "Eingabeüberwachung noch nicht erlaubt")
+        case .missing: return L("No permission (Input Monitoring)", "Keine Berechtigung (Eingabeüberwachung)")
+        case .stale: return L("Input Monitoring granted but not working", "Eingabeüberwachung erteilt, greift aber nicht")
         }
     }
 
@@ -109,13 +109,13 @@ public enum InputMonitoringState: Equatable {
 }
 
 public enum PermissionTexts {
-    public static let staleHint = "Eintrag veraltet – in Systemeinstellungen entfernen (–) und neu hinzufügen"
+    public static var staleHint: String { L("Stale entry – remove it in System Settings (–) and add it again", "Eintrag veraltet – in Systemeinstellungen entfernen (–) und neu hinzufügen") }
     /// Name der Privacy-Seite: ab macOS 27 „Gerätesteuerung und Datenzugriff“, vorher „Bedienungshilfen“
-    public static let accessibilityName = "Gerätesteuerung und Datenzugriff (Bedienungshilfen)"
+    public static var accessibilityName: String { L("Accessibility (\"Device control and data access\")", "Gerätesteuerung und Datenzugriff (Bedienungshilfen)") }
     public static let accessibilityPath = "Systemeinstellungen › Datenschutz & Sicherheit › Gerätesteuerung und Datenzugriff (älteres macOS: Bedienungshilfen)"
     public static func accessibility(trusted: Bool, asked: Bool) -> String? {
         if trusted { return nil }
-        return asked ? "\(accessibilityName) fehlt – falls schon aktiviert: " + staleHint : "\(accessibilityName) noch nicht erlaubt"
+        return asked ? L("\(accessibilityName) missing – if already enabled: ", "\(accessibilityName) fehlt – falls schon aktiviert: ") + staleHint : L("\(accessibilityName) not allowed yet", "\(accessibilityName) noch nicht erlaubt")
     }
 }
 
@@ -296,6 +296,13 @@ public struct SystemPointerFilter {
 /// Rolle einer HID-Schnittstelle des Touch-Monitors (für Menü und Diagnose).
 public enum InterfaceRole: String, Equatable {
     case touch = "Touch", mouse = "Maus", keyboard = "Tastatur", vendor = "Vendor", other = "HID"
+    public var title: String {
+        switch self {
+        case .mouse: return L("Mouse", "Maus")
+        case .keyboard: return L("Keyboard", "Tastatur")
+        default: return rawValue
+        }
+    }
 
     /// usagePairs: (UsagePage, Usage) aus DeviceUsagePairs bzw. PrimaryUsagePage/Usage
     public static func classify(usagePairs: [(Int, Int)], hasTouchLayout: Bool) -> InterfaceRole {
@@ -318,19 +325,19 @@ public struct InterfaceStatus: Equatable {
 
     /// „3 Schnittstellen: Touch exklusiv, Maus exklusiv, Vendor NICHT exklusiv“
     public static func summary(_ list: [InterfaceStatus]) -> String {
-        guard !list.isEmpty else { return "keine Schnittstelle offen" }
+        guard !list.isEmpty else { return L("no interface open", "keine Schnittstelle offen") }
         let sorted = list.sorted { ($0.role == .touch ? 0 : 1, $0.registryID) < ($1.role == .touch ? 0 : 1, $1.registryID) }
-        let parts = sorted.map { "\($0.role.rawValue) " + ($0.exclusive ? "exklusiv" : "NICHT exklusiv") }
-        return "\(list.count) Schnittstelle\(list.count == 1 ? "" : "n"): " + parts.joined(separator: ", ")
+        let parts = sorted.map { "\($0.role.title) " + ($0.exclusive ? L("exclusive", "exklusiv") : L("NOT exclusive", "NICHT exklusiv")) }
+        return L("\(list.count) interface\(list.count == 1 ? "" : "s"): ", "\(list.count) Schnittstelle\(list.count == 1 ? "" : "n"): ") + parts.joined(separator: ", ")
     }
 
     /// „Touch: 0 Reports, Maus: 120 Reports“ – welche Schnittstelle tatsächlich Daten liefert
     public static func reportSummary(_ list: [(role: InterfaceRole, reports: Int)]) -> String {
-        guard !list.isEmpty else { return "keine Schnittstelle offen" }
+        guard !list.isEmpty else { return L("no interface open", "keine Schnittstelle offen") }
         let order: [InterfaceRole] = [.touch, .mouse, .keyboard, .vendor, .other]
         var sums: [InterfaceRole: Int] = [:]
         for e in list { sums[e.role, default: 0] += e.reports }
-        return order.compactMap { r in sums[r].map { "\(r.rawValue): \($0) Report\($0 == 1 ? "" : "s")" } }.joined(separator: ", ")
+        return order.compactMap { r in sums[r].map { "\(r.title): \($0) Report\($0 == 1 ? "" : "s")" } }.joined(separator: ", ")
     }
 }
 
@@ -339,9 +346,9 @@ public enum TouchSource: Equatable {
     case none, multitouch, singleTouchPointer
     public var title: String {
         switch self {
-        case .none: return "noch keine Touch-Daten"
+        case .none: return L("no touch data yet", "noch keine Touch-Daten")
         case .multitouch: return "Multitouch"
-        case .singleTouchPointer: return "Single-Touch (Gerät im Mausmodus)"
+        case .singleTouchPointer: return L("Single touch (device in mouse mode)", "Single-Touch (Gerät im Mausmodus)")
         }
     }
 

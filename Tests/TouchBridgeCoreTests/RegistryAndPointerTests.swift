@@ -193,16 +193,16 @@ final class MultitouchActivationTests: XCTestCase {
 
     func testReportSummaryAndSource() {
         XCTAssertEqual(InterfaceStatus.reportSummary([(role: .vendor, reports: 0), (role: .mouse, reports: 120), (role: .touch, reports: 0)]),
-                       "Touch: 0 Reports, Maus: 120 Reports, Vendor: 0 Reports")
+                       "Touch: 0 Reports, Mouse: 120 Reports, Vendor: 0 Reports")
         XCTAssertEqual(InterfaceStatus.reportSummary([(role: .touch, reports: 1)]), "Touch: 1 Report")
         XCTAssertEqual(TouchSource.evaluate(multitouchReports: 0, pointerInterfaces: 1, multitouchInterfaces: 1), .singleTouchPointer)
         XCTAssertEqual(TouchSource.evaluate(multitouchReports: 3, pointerInterfaces: 1, multitouchInterfaces: 1), .multitouch)
         XCTAssertEqual(TouchSource.evaluate(multitouchReports: 0, pointerInterfaces: 0, multitouchInterfaces: 0), .none)
-        XCTAssertEqual(TouchSource.singleTouchPointer.title, "Single-Touch (Gerät im Mausmodus)")
+        XCTAssertEqual(TouchSource.singleTouchPointer.title, "Single touch (device in mouse mode)")
     }
 
     func testAccessibilityTextUsesMacOS27Name() {
-        XCTAssertTrue(PermissionTexts.accessibility(trusted: false, asked: false)!.contains("Gerätesteuerung und Datenzugriff"))
+        XCTAssertTrue(PermissionTexts.accessibility(trusted: false, asked: false)!.contains("Device control and data access"))
         XCTAssertTrue(PermissionTexts.accessibilityName.contains("(Bedienungshilfen)"))
     }
 }

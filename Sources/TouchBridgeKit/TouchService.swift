@@ -8,7 +8,7 @@ import TouchBridgeCore
 /// Betriebsart: Touch als Maus & Gesten oder als MIDI-Controller.
 public enum InputMode: String, Codable, CaseIterable {
     case gestures, midi
-    public var title: String { self == .gestures ? "Maus & Gesten" : "MIDI" }
+    public var title: String { self == .gestures ? L("Mouse & gestures", "Maus & Gesten") : "MIDI" }
 }
 
 /// Einstellungen, die CLI und Menüleisten-App teilen.
@@ -449,7 +449,7 @@ public final class TouchService {
     private func startMIDI() {
         if midiOutput == nil { midiOutput = CoreMIDIOutput(name: "TouchBridge", log: log) }
         guard let out = midiOutput else {
-            status.lastError = "MIDI-Port konnte nicht angelegt werden"
+            status.lastError = L("Could not create MIDI port", "MIDI-Port konnte nicht angelegt werden")
             return
         }
         if let m = midiEngine {

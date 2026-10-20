@@ -129,7 +129,7 @@ To remove it: `curl -fsSL https://raw.githubusercontent.com/thegroovex/Touchbrid
 
 \* needs the multitouch setup.
 
-Menu options: **1-finger drag scrolls** (instead of dragging), **Pinch = trackpad zoom** (off: sends Cmd + / Cmd −
+Menu options: **Language** (English/Deutsch), **1-finger drag scrolls** (instead of dragging), **Pinch = trackpad zoom** (off: sends Cmd + / Cmd −
 instead), scroll direction and speed, screen orientation (Touch › Orientation).
 
 ## MIDI mode
@@ -193,4 +193,4 @@ scripts/package.sh dev           # builds TouchBridge.app as a DMG in dist/
 Technical background (permissions and code signing, exclusive device access, single/multitouch detection,
 experiments, diagnostics, code layout): [docs/technical-notes.de.md](docs/technical-notes.de.md) (German).
 
-Note: the app's menus and the Pi log messages are currently in German.
+The app is in English by default. For German choose Menu › **Language › Deutsch**.

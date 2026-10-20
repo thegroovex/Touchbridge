@@ -203,6 +203,6 @@ final class MultitouchActivationTests: XCTestCase {
 
     func testAccessibilityTextUsesMacOS27Name() {
         XCTAssertTrue(PermissionTexts.accessibility(trusted: false, asked: false)!.contains("Device control and data access"))
-        XCTAssertTrue(PermissionTexts.accessibilityName.contains("(Bedienungshilfen)"))
+        XCTAssertTrue(PermissionTexts.accessibilityName.contains("Accessibility"))
     }
 }

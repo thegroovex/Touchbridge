@@ -1,0 +1,17 @@
+/*
+ * HID touch screen interface of the TouchBridge Digitizer. The CDC ACM
+ * interface is the board's board_cdc_acm_uart node (boards/common/usb/cdc_acm_serial.dtsi).
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/ {
+	touch_hid: touch_hid {
+		compatible = "zephyr,hid-device";
+		label = "TouchBridge Digitizer";
+		protocol-code = "none";
+		/* 1 ms interrupt IN endpoint, 64-byte report 1 (incl. report ID) */
+		in-polling-period-us = <1000>;
+		in-report-size = <64>;
+	};
+};

@@ -1,0 +1,17 @@
+# west manifest for the TouchBridge Digitizer firmware.
+# Pins Zephyr (same version as the Auracaster dongle) and fetches only what an
+# nRF52840 USB device needs.
+manifest:
+  self:
+    path: nrf-digitizer
+  remotes:
+    - name: zephyrproject-rtos
+      url-base: https://github.com/zephyrproject-rtos
+  projects:
+    - name: zephyr
+      remote: zephyrproject-rtos
+      revision: v4.4.2
+      import:
+        name-allowlist:
+          - cmsis_6
+          - hal_nordic

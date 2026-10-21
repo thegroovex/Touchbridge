@@ -155,6 +155,20 @@ struct GeneralTab: View {
                     Toggle(L("1-finger drag scrolls (instead of pointer/drag)", "1-Finger-Ziehen scrollt (statt Zeiger/Ziehen)"), isOn: $model.settings.oneFingerScroll)
                     Toggle(L("Reverse scroll direction", "Scrollrichtung umkehren"), isOn: $model.settings.invertScroll)
                 }
+                SectionBox(title: L("Output", "Ausgabe")) {
+                    Picker(L("Output", "Ausgabe"), selection: $model.settings.output) {
+                        ForEach(TouchOutput.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .frame(maxWidth: 420)
+                    if model.settings.output == .digitizer {
+                        Picker(L("Dongle covers", "Dongle deckt ab"), selection: $model.settings.digitizerSpace) {
+                            ForEach(DigitizerSpace.allCases, id: \.self) { Text($0.title).tag($0) }
+                        }
+                        .frame(maxWidth: 420)
+                    }
+                    Hint(L("Digitizer dongle: an nRF52840 board with the TouchBridge Digitizer firmware reports the touches to macOS as a real USB touch screen. TouchBridge then posts no gestures or mouse events of its own; macOS handles touch. See firmware/nrf-digitizer in the repository.",
+                           "Digitizer-Dongle: Ein nRF52840-Board mit der TouchBridge-Digitizer-Firmware meldet die Berührungen als echten USB-Touchscreen an macOS. TouchBridge sendet dann keine eigenen Gesten oder Mausereignisse; macOS verarbeitet Touch selbst. Siehe firmware/nrf-digitizer im Repository."))
+                }
                 SectionBox(title: L("Language", "Sprache")) {
                     Picker(L("Language", "Sprache"), selection: Binding(get: { model.language }, set: { model.setLanguage($0) })) {
                         ForEach(AppLanguage.allCases, id: \.self) { Text($0.title).tag($0) }

@@ -1,0 +1,31 @@
+/*
+ * Optional layout for UF2 bootloaders shipped with SoftDevice S140 v7.x
+ * (INFO_UF2.TXT: "SoftDevice: S140 version 7.x.x"): application at 0x27000.
+ * Applied on top of promicro_nrf52840/nrf52840/uf2 (default: S140 v6, 0x26000).
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/delete-node/ &reserved_partition_0;
+/delete-node/ &code_partition;
+
+/ {
+	chosen {
+		zephyr,code-partition = &code_partition;
+	};
+};
+
+&flash0 {
+	partitions {
+		reserved_partition_0: partition@0 {
+			label = "SoftDevice";
+			read-only;
+			reg = <0x00000000 0x00027000>;
+		};
+
+		code_partition: partition@27000 {
+			label = "Application";
+			reg = <0x00027000 0x000c5000>;
+		};
+	};
+};

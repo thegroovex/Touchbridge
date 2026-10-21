@@ -68,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         service.log = { [weak self] line in self?.appendLog(line) }
         service.onStatus = { [weak self] _ in self?.updateIcon() }
         service.onMIDIUpdate = { [weak self] in self?.refreshOverlayContent() }
+        service.digitizer.onStatus = { [weak self] _ in self?.updateIcon() }
         let ti = TouchInteraction(settings: { [weak self] in self?.effectiveSettings ?? TouchSettings() },
                                   log: { [weak self] line in self?.appendLog(line) })
         interaction = ti
@@ -335,9 +336,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if im.isProblem { return im.statusText }
         if let e = st.lastError { return e }
         if st.devices.isEmpty { return L("Touch monitor not connected", "Touch-Monitor nicht angeschlossen") }
+        var dongle = ""
+        if settings.usesDigitizer {
+            dongle = " – " + L("digitizer dongle", "Digitizer-Dongle")
+            if !service.digitizer.mainStatus.connected { dongle += L(" (not connected)", " (nicht verbunden)") }
+        }
         return st.devices.joined(separator: ", ") + (st.exclusive ? L(" – exclusive", " – exklusiv") : L(" – not exclusive", " – nicht exklusiv"))
             + (st.source == .singleTouchPointer ? " – " + st.source.title : "")
-            + (settings.mode == .midi ? " – MIDI" : "")
+            + (settings.mode == .midi ? " – MIDI" : "") + dongle
     }
 
     // MARK: - Bildsteuerung
@@ -403,7 +409,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if im.suggestReset { menu.addItem(action(L("Reset permissions …", "Berechtigungen zurücksetzen …"), #selector(resetPermissions))) }
         }
         if let ax = PermissionTexts.accessibility(trusted: Permissions.accessibility, asked: Permissions.askedAccessibility),
-           settings.mode == .gestures {
+           settings.mode == .gestures, !settings.usesDigitizer {
             menu.addItem(warning("⚠️ " + ax, color: .systemOrange))
             if !im.suggestReset && Permissions.askedAccessibility { menu.addItem(action(L("Reset permissions …", "Berechtigungen zurücksetzen …"), #selector(resetPermissions))) }
         }
@@ -432,6 +438,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(toggle(m.title, settings.mode == m, #selector(selectMode(_:)), tag: i))
         }
         menu.addItem(submenu(L("MIDI settings", "MIDI-Einstellungen"), midiMenu()))
+        menu.addItem(.separator())
+
+        // Ausgabe: synthetische Events oder Digitizer-Dongle (nRF52840)
+        menu.addItem(sectionHeader(L("Output", "Ausgabe")))
+        for (i, o) in TouchOutput.allCases.enumerated() {
+            menu.addItem(toggle(o.title, settings.output == o, #selector(selectOutput(_:)), tag: i))
+        }
+        if settings.output == .digitizer {
+            let ds = service.digitizer.mainStatus
+            if settings.mode == .midi {
+                menu.addItem(warning(L("   MIDI mode: the dongle is not used", "   MIDI-Modus: Dongle wird nicht genutzt"), color: .secondaryLabelColor))
+            } else {
+                menu.addItem(warning("   " + ds.summary, color: ds.connected && ds.hello != nil ? .secondaryLabelColor : .systemOrange))
+            }
+            menu.addItem(submenu(L("Dongle covers", "Dongle deckt ab"), digitizerSpaceMenu()))
+            menu.addItem(action(L("Restart dongle into bootloader (firmware update)", "Dongle in den Bootloader starten (Firmware-Update)"),
+                                #selector(dongleBootloader), enabled: ds.connected))
+        }
         menu.addItem(.separator())
 
         // Bild
@@ -564,6 +588,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         m.autoenablesItems = false
         i.submenu = m
         return i
+    }
+
+    private func digitizerSpaceMenu() -> NSMenu {
+        let m = NSMenu()
+        for (i, sp) in DigitizerSpace.allCases.enumerated() {
+            m.addItem(toggle(sp.title, settings.digitizerSpace == sp, #selector(selectDigitizerSpace(_:)), tag: i))
+        }
+        return m
     }
 
     private func displayMenu() -> NSMenu {
@@ -777,6 +809,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if m == .gestures { Permissions.requestAccessibilityOnce() }
         settings.mode = m
     }
+    @objc private func selectOutput(_ s: NSMenuItem) {
+        let o = TouchOutput.allCases[s.tag]
+        if o == .gestures { Permissions.requestAccessibilityOnce() }
+        settings.output = o
+    }
+    @objc private func selectDigitizerSpace(_ s: NSMenuItem) { settings.digitizerSpace = DigitizerSpace.allCases[s.tag] }
+    @objc private func dongleBootloader() { service.digitizer.enterBootloader() }
     @objc private func selectLayout(_ s: NSMenuItem) { settings.midiLayout = MIDILayoutPreset.allCases[s.tag] }
     @objc private func toggleMPE() { settings.mpe.toggle() }
     @objc private func selectChannel(_ s: NSMenuItem) { settings.midiChannel = s.tag }

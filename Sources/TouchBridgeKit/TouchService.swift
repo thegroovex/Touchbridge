@@ -57,13 +57,17 @@ public struct TouchSettings: Codable, Equatable {
     public var contextMenu = true
     /// Hold time for a long press (seconds)
     public var longPressDuration = 0.5
+    /// Output in mouse & gestures mode: synthetic events or the nRF52840 digitizer dongle (macOS handles touch)
+    public var output: TouchOutput = .gestures
+    /// Screen area the dongle's coordinate range stands for (depends on which display macOS assigns it to)
+    public var digitizerSpace: DigitizerSpace = .touchDisplay
     public init() {}
 
     enum CodingKeys: String, CodingKey {
         case enabled, displayID, rotation, flipX, flipY, swapXY, invertScroll, scrollGain, seize, vid, pid
         case mode, midiLayout, mpe, midiChannel, baseNote, scale, bendRange, showOverlay, suppressSystemPointer
         case seizeTouchOnly, oneFingerScroll, mtSequence, nativeZoom, momentumScroll, hidePointer, gestures
-        case smartTarget, smartTargetRadius, contextMenu, longPressDuration
+        case smartTarget, smartTargetRadius, contextMenu, longPressDuration, output, digitizerSpace
     }
 
     /// Fehlende Schlüssel (ältere gespeicherte Einstellungen) fallen auf die Standardwerte zurück.
@@ -102,6 +106,8 @@ public struct TouchSettings: Codable, Equatable {
         smartTargetRadius = max(2, min(40, v(.smartTargetRadius, d.smartTargetRadius)))
         contextMenu = v(.contextMenu, d.contextMenu)
         longPressDuration = max(0.25, min(2, v(.longPressDuration, d.longPressDuration)))
+        output = v(.output, d.output)
+        digitizerSpace = v(.digitizerSpace, d.digitizerSpace)
     }
     public var multitouchSequence: MultitouchSequence? { mtSequence.flatMap(MultitouchSequence.init(rawValue:)) }
 
@@ -125,6 +131,8 @@ public struct TouchSettings: Codable, Equatable {
         return c
     }
     public var midiLayoutModel: MIDILayout { midiLayout.build(baseNote: baseNote, scale: scale) }
+    /// Touch goes to the digitizer dongle: no synthetic gestures or mouse events (MIDI mode is unaffected).
+    public var usesDigitizer: Bool { mode == .gestures && output == .digitizer }
     /// Im MIDI-Modus wird das Gerät immer exklusiv angefordert (sonst bewegt macOS zusätzlich den Cursor).
     public var effectiveSeize: Bool { seize || mode == .midi }
 }
@@ -276,6 +284,16 @@ public final class TouchService {
                 if oldValue.mode == .midi { midiEngine?.releaseAll() }
                 if settings.mode == .midi { engine.stopMomentum(); syncFrameTimer(); cursorHider.show() }
             }
+            if settings.usesDigitizer != oldValue.usesDigitizer {
+                // switching output: end a running gesture / lift the dongle's contacts first
+                if settings.usesDigitizer {
+                    if engine.isActive { engine.update([]) }
+                    engine.stopMomentum(); syncFrameTimer(); cursorHider.show()
+                } else {
+                    digitizer.send([]); digitizerTracker.reset()
+                }
+                if running { updateDigitizer() }
+            }
             if !settings.hidePointer || !settings.enabled { cursorHider.show() }
             if let m = midiEngine {
                 m.setLayout(settings.midiLayoutModel)
@@ -321,6 +339,10 @@ public final class TouchService {
     private let poster = EventPoster()
     /// Zeiger beim Touch ausblenden
     public let cursorHider = CursorHider()
+    /// Serial link to the nRF52840 digitizer dongle (output "Digitizer dongle")
+    public let digitizer = NRFDigitizerBridge()
+    private var digitizerTracker = DigitizerContactTracker()
+    private var digitizerOutput: Bool { settings.usesDigitizer && !dumpMode }
     /// Phase 2: Touch-Kontextmenü (langes Halten). Ohne Delegate bzw. bei false bleibt es beim Rechtsklick.
     public weak var gestureDelegate: GestureEngineDelegate? {
         didSet { engine.delegate = gestureDelegate }
@@ -457,6 +479,8 @@ public final class TouchService {
 
         let midi = settings.mode == .midi && !dumpMode
         if midi { startMIDI() }
+        digitizer.log = log
+        updateDigitizer()
 
         // commonModes: Touch funktioniert auch, während ein Menü oder Dialog offen ist.
         // Im MIDI-Modus schneller (4 ms), damit gedrosselte Werte zügig nachgesendet werden.
@@ -487,6 +511,8 @@ public final class TouchService {
         cursorHider.show()
         midiEngine?.releaseAll()
         onMIDIUpdate?()
+        digitizerTracker.reset()
+        digitizer.stop()
         // Beobachter abmelden und Geräte schließen. Die IOKit-Registrierung (Puffer, Callback) gehört dem
         // HIDInputHub und bleibt bis zum Abstecken bestehen – kein Callback kann ein freigegebenes Objekt treffen.
         for d in devices { d.close() }
@@ -501,6 +527,25 @@ public final class TouchService {
         }
         manager = nil
         status = Status(running: false)
+    }
+
+    /// Dongle link on while touch runs with output "Digitizer dongle", off otherwise.
+    private func updateDigitizer() {
+        if running && settings.enabled && digitizerOutput { digitizer.start() } else { digitizerTracker.reset(); digitizer.stop() }
+    }
+
+    /// Area the dongle's 0…32767 range stands for (global display coordinates)
+    private func digitizerRect(touch rect: CGRect) -> CGRect {
+        switch settings.digitizerSpace {
+        case .touchDisplay: return rect
+        case .mainDisplay: return CGDisplayBounds(CGMainDisplayID())
+        case .allDisplays:
+            var count: UInt32 = 0
+            guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return rect }
+            var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+            guard CGGetActiveDisplayList(count, &ids, &count) == .success else { return rect }
+            return ids.prefix(Int(count)).map(CGDisplayBounds).reduce(CGRect.null) { $0.union($1) }
+        }
     }
 
     private func note(_ line: String) {
@@ -642,6 +687,11 @@ public final class TouchService {
         guard running, manager != nil else { return }
         // Gerät schon wieder weg (veraltete Registry-ID)? Dann nicht übernehmen
         if let id = HIDOpenRegistry.registryID(raw), !HIDOpenRegistry.isLive(id) { return }
+        // our own digitizer dongle: its touches are for macOS – never open or seize it (feedback loop)
+        if (IOHIDDeviceGetProperty(raw, kIOHIDVendorIDKey as CFString) as? Int) == NRFDigitizer.vendorID,
+           (IOHIDDeviceGetProperty(raw, kIOHIDProductIDKey as CFString) as? Int) == NRFDigitizer.productID {
+            return
+        }
         if releaseBluetoothDigitizer && TouchService.isBluetooth(raw) {
             if !quiet {
                 let name = (IOHIDDeviceGetProperty(raw, kIOHIDProductKey as CFString) as? String) ?? "Bluetooth device"
@@ -803,6 +853,16 @@ public final class TouchService {
             map.screenPoint(TouchMapping.normalize($0.x, min: xf.logicalMin, max: xf.logicalMax),
                             TouchMapping.normalize($0.y, min: yf.logicalMin, max: yf.logicalMax), in: rect)
         }
+        if digitizerOutput {
+            // dongle mode: forward contacts only – no synthetic events, no pointer warp, no cursor hiding
+            let space = digitizerRect(touch: rect)
+            let pts = zip(contacts, points).map { c, p -> (id: Int, x: CGFloat, y: CGFloat) in
+                let n = DigitizerSpace.normalize(p, in: space)
+                return (id: c.id, x: n.x, y: n.y)
+            }
+            digitizer.send(digitizerTracker.contacts(for: pts))
+            return
+        }
         // Nicht exklusiv: macOS bewegt den Zeiger zusätzlich selbst (relativ) – Position absolut auf den Touch-Bildschirm korrigieren
         if !dumpMode, suppressor.active, points.count == 1 { CGWarpMouseCursorPosition(points[0]) }
         if dumpMode {
@@ -834,6 +894,7 @@ public final class TouchService {
     }
 
     fileprivate func releaseIfActive() {
+        if digitizerTracker.activeCount > 0 { digitizerTracker.reset(); digitizer.send([]) }
         if engine.isActive { engine.update([]); syncFrameTimer() }
         if let m = midiEngine, !m.fingerInfo.isEmpty { m.releaseAll(); onMIDIUpdate?() }
     }

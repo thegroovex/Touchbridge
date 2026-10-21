@@ -53,6 +53,9 @@ func printUsage() {
       --scroll-gain F        scroll factor (default 1.0)
       --vid 0x1234 --pid 0x5678     choose a specific device
       --midi                 MIDI mode: virtual MIDI port "TouchBridge" instead of mouse & gestures
+      --digitizer            output to the nRF52840 digitizer dongle (USB 2fe3:0010): macOS handles touch,
+                             TouchBridge posts no gestures or mouse events (firmware/nrf-digitizer)
+      --digitizer-space touch|main|all   screen area the dongle covers (default: touch display)
       --layout mixer|keyboard|performance           MIDI layout (default: mixer)
       --no-mpe               without MPE, everything on one channel (--channel)
       --channel N            MIDI channel 1–16 (without MPE; default 1)
@@ -99,6 +102,13 @@ while !args.isEmpty {
     case "--vid": settings.vid = parseInt(next())
     case "--pid": settings.pid = parseInt(next())
     case "--midi": settings.mode = .midi
+    case "--digitizer": settings.output = .digitizer
+    case "--digitizer-space":
+        switch next() {
+        case "main": settings.digitizerSpace = .mainDisplay
+        case "all": settings.digitizerSpace = .allDisplays
+        default: settings.digitizerSpace = .touchDisplay
+        }
     case "--layout":
         let v = next()
         guard let l = MIDILayoutPreset(rawValue: v) else { print("Unknown layout: \(v) (mixer|keyboard|performance)"); exit(1) }

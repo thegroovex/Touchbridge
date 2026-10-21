@@ -26,6 +26,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var availableUpdate: ReleaseInfo?
     private var updateBusy = false
     private var updateTimer: Timer?
+    private lazy var touchTest = TouchTestController()
+    private var realTouchProbe: RealTouchProbe?
 
     static var version: String {
         Updater.currentVersion
@@ -104,7 +106,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard !updateBusy else { return }
         updateBusy = true
         updater.check(includePrereleases: SettingsStore.includePrereleases,
-                      skipped: interactive ? nil : SettingsStore.skippedVersion) { [weak self] result in
+                      skipped: interactive ? nil : SettingsStore.skippedVersion,
+                      includeBetas: SettingsStore.includeBetas) { [weak self] result in
             guard let self = self else { return }
             self.updateBusy = false
             switch result {
@@ -180,12 +183,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func toggleAutoUpdate() { SettingsStore.autoUpdateCheck.toggle() }
     @objc private func togglePrereleases() { SettingsStore.includePrereleases.toggle() }
+    @objc private func toggleBetas() { SettingsStore.includeBetas.toggle() }
 
     private func updatesMenu() -> NSMenu {
         let m = NSMenu()
         m.addItem(action(updateBusy ? L("Checking …", "Suche läuft …") : L("Check for updates …", "Nach Updates suchen …"), #selector(checkForUpdatesAction), enabled: !updateBusy))
         m.addItem(toggle(L("Check automatically (at launch and daily)", "Automatisch prüfen (beim Start und täglich)"), SettingsStore.autoUpdateCheck, #selector(toggleAutoUpdate)))
         m.addItem(toggle(L("Include pre-releases", "Vorabversionen einbeziehen"), SettingsStore.includePrereleases, #selector(togglePrereleases)))
+        m.addItem(toggle(L("Include beta versions (e.g. 0.4.0-beta1)", "Beta-Versionen einbeziehen (z. B. 0.4.0-beta1)"), SettingsStore.includeBetas, #selector(toggleBetas)))
         if let d = SettingsStore.lastUpdateCheck {
             let f = DateFormatter(); f.dateStyle = .short; f.timeStyle = .short
             let i = NSMenuItem(title: L("Last checked: ", "Zuletzt geprüft: ") + f.string(from: d), action: nil, keyEquivalent: "")
@@ -459,6 +464,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(action(diagnosing ? L("Recording – touch the screen …", "Diagnose läuft – Bildschirm berühren …") : L("Record diagnostics (10 s touch)", "Diagnose aufzeichnen (10 s Touch)"), #selector(runDiagnosis), enabled: !diagnosing))
         menu.addItem(action(experiment != nil ? L("Multitouch experiments running – tap with 2 fingers …", "Multitouch-Experimente laufen – mit 2 Fingern tippen …") : L("Start multitouch experiments …", "Multitouch-Experimente starten …"),
                             #selector(runMTExperiments), enabled: experiment == nil && !diagnosing))
+        menu.addItem(action(L("Touch test window …", "Touch-Testfenster …"), #selector(openTouchTest)))
+        menu.addItem(action(realTouchProbe != nil ? L("Real touch experiment running – do not touch …", "Echtes-Touch-Experiment läuft – nicht berühren …")
+                                                  : L("Real touch experiment …", "Echtes-Touch-Experiment …"),
+                            #selector(runRealTouchExperiment), enabled: realTouchProbe == nil && experiment == nil && !diagnosing))
+        menu.addItem(toggle(L("Bluetooth digitizer: let macOS handle it (no TouchBridge)", "Bluetooth-Digitizer: macOS überlassen (ohne TouchBridge)"),
+                            service.releaseBluetoothDigitizer, #selector(toggleReleaseBluetooth)))
         if let seq = settings.multitouchSequence {
             menu.addItem(warning(L("Saved multitouch sequence: \(seq.title)", "Gespeicherte Multitouch-Sequenz: \(seq.title)"), color: .secondaryLabelColor))
             menu.addItem(action(L("Forget saved multitouch sequence", "Gespeicherte Multitouch-Sequenz vergessen"), #selector(forgetMTSequence)))
@@ -829,6 +840,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func forgetMTSequence() { settings.mtSequence = nil }
+
+    // MARK: - Real touch experiment / Touch test (0.4 beta)
+
+    private func prepareTouchTest() {
+        touchTest.extraInfo = { [weak self] in
+            guard let self = self else { return [] }
+            return ["TouchBridge source: \(self.service.touchSource.title) – status: \(self.statusText)",
+                    "Bluetooth digitizer left to macOS: " + (self.service.releaseBluetoothDigitizer ? "yes" : "no"),
+                    HIDEventBridge.summary]
+        }
+        touchTest.onRunProbe = { [weak self] in self?.startRealTouchProbe() }
+    }
+
+    @objc private func openTouchTest() {
+        prepareTouchTest()
+        touchTest.show(on: service.targetDisplay)
+    }
+
+    @objc private func runRealTouchExperiment() {
+        NSApp.activate(ignoringOtherApps: true)
+        let a = NSAlert()
+        a.messageText = L("Start real touch experiment?", "Echtes-Touch-Experiment starten?")
+        a.informativeText = L(
+            "TouchBridge opens the Touch Test window on the touch display and then plays a tap, a drag and a 2-finger pinch in 5 variants (about 20 s), using synthetic events with an attached HID digitizer payload. Please do not touch the mouse or screen meanwhile. The pointer moves and the test window may receive clicks.\n\nResults are appended to \"TouchBridge-RealTouch-Probe.txt\" on the desktop.",
+            "TouchBridge öffnet das Touch-Testfenster auf dem Touch-Bildschirm und spielt dann Tippen, Ziehen und 2-Finger-Pinch in 5 Varianten ab (ca. 20 s) – synthetische Events mit angehängtem HID-Digitizer-Payload. Bitte währenddessen Maus und Bildschirm nicht berühren. Der Zeiger bewegt sich, das Testfenster kann Klicks bekommen.\n\nDie Ergebnisse werden an „TouchBridge-RealTouch-Probe.txt“ auf dem Schreibtisch angehängt.")
+        a.addButton(withTitle: "Start")
+        a.addButton(withTitle: L("Cancel", "Abbrechen"))
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        openTouchTest()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.startRealTouchProbe() }
+    }
+
+    private func startRealTouchProbe() {
+        guard realTouchProbe == nil else { return }
+        if !touchTest.isVisible { openTouchTest() }
+        var lines: [String] = []
+        let display = service.targetDisplay
+        let p = RealTouchProbe(display: display, region: touchTest.touchRegionCG) { [weak self] line in
+            lines.append(line)
+            self?.appendLog(line)
+        }
+        p.onVariant = { [weak self] v in self?.touchTest.setPhase(v) }
+        realTouchProbe = p
+        let wasMuted = service.muted
+        service.muted = true          // real touches must not interfere
+        touchTest.probeRunning = true
+        statusItem.button?.title = " RT"
+        p.run { [weak self] in
+            guard let self = self else { return }
+            self.service.muted = wasMuted
+            self.touchTest.probeRunning = false
+            self.realTouchProbe = nil
+            self.statusItem.button?.title = ""
+            self.updateIcon()
+            let report = ["TouchBridge \(AppDelegate.version)"] + lines + self.touchTest.report(title: "Touch Test window counters after the experiment")
+            RealTouchProbe.append(report)
+            self.alert(L("Real touch experiment done", "Echtes-Touch-Experiment fertig"),
+                       L("The counters per variant are shown in the Touch Test window. Results were appended to \"TouchBridge-RealTouch-Probe.txt\" on the desktop – please send that file.",
+                         "Die Zähler je Variante stehen im Touch-Testfenster. Die Ergebnisse wurden an „TouchBridge-RealTouch-Probe.txt“ auf dem Schreibtisch angehängt – bitte diese Datei schicken."))
+        }
+    }
+
+    @objc private func toggleReleaseBluetooth() {
+        service.releaseBluetoothDigitizer.toggle()
+        updateIcon()
+        if touchTest.isVisible { touchTest.setPhase(service.releaseBluetoothDigitizer ? "BT digitizer → macOS" : "BT digitizer → TouchBridge") }
+    }
 
     /// Verlinkt das CLI aus dem App-Bundle nach /usr/local/bin/touchbridge (fragt nach dem Admin-Passwort).
     @objc private func installCLI() {

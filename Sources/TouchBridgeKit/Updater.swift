@@ -46,7 +46,7 @@ public final class Updater {
 
     /// Releases abrufen und das passende Update wählen. completion auf dem Main-Thread.
     public func check(includePrereleases: Bool, skipped: String?, current: String = Updater.currentVersion,
-                      completion: @escaping (Result<ReleaseInfo?, Error>) -> Void) {
+                      includeBetas: Bool = true, completion: @escaping (Result<ReleaseInfo?, Error>) -> Void) {
         URLSession.shared.dataTask(with: request(Updater.releasesURL)) { data, resp, err in
             let result: Result<ReleaseInfo?, Error>
             if let e = err {
@@ -57,7 +57,7 @@ public final class Updater {
                 do {
                     let list = try UpdateLogic.decodeReleases(data ?? Data())
                     result = .success(UpdateLogic.pickUpdate(list, current: current, includePrereleases: includePrereleases,
-                                                             skipped: skipped))
+                                                             skipped: skipped, includeBetas: includeBetas))
                 } catch { result = .failure(UpdateError.network("unreadable response: \(error.localizedDescription)")) }
             }
             DispatchQueue.main.async { completion(result) }

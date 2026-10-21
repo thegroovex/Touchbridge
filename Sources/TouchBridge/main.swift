@@ -14,6 +14,7 @@ var ddcSet: [(String, Int)] = []
 var diagnoseSeconds: Double? = nil
 var checkUpdate = false
 var mtProbe = false
+var touchProbe = false
 var mtOptions = MultitouchExperiment.Options()
 
 func parseInt(_ s: String) -> Int? {
@@ -32,6 +33,10 @@ func printUsage() {
                              log raw reports (default 10 s), then exit
       --mt-probe             run the multitouch experiments (a–e), waiting 3 s each for report 13
                              (tap with 2 fingers meanwhile), then exit (exit 0 = multitouch found, 6 = not)
+      --touch-probe          real touch experiment: plays tap, drag and 2-finger pinch on the touch display in 5
+                             variants (synthetic events with an IOHIDEvent digitizer payload), logs what passes the
+                             WindowServer, appends to ~/Desktop/TouchBridge-RealTouch-Probe.txt, then exits.
+                             Open the app's Touch Test window on the touch display first to see what apps receive.
       --skip-reenumerate     with --mt-probe, skip step d (USB re-enumeration)
       --mt-sequence NAME     apply a multitouch sequence on connect: hid-input-get|hid-feature|
                              usb-linux-init|usb-interface-linux-init|usb-reenumerate-init|hid-set-value
@@ -72,6 +77,7 @@ while !args.isEmpty {
         diagnoseSeconds = 10
         if let n = args.first.flatMap(Double.init) { diagnoseSeconds = n; args.removeFirst() }
     case "--mt-probe": mtProbe = true
+    case "--touch-probe": touchProbe = true
     case "--skip-reenumerate": mtOptions.reenumerate = false
     case "--mt-sequence":
         let v = next()
@@ -149,6 +155,20 @@ if let secs = diagnoseSeconds {
     let probe = HIDProbe(vid: settings.vid ?? HIDProbe.anmiteVID, pid: settings.pid ?? HIDProbe.anmitePID) { print($0) }
     probe.run(seconds: secs) { s in exit(s.interfaces == 0 ? 4 : (s.reports == 0 ? 5 : 0)) }
     RunLoop.main.run()
+}
+
+if touchProbe {
+    if !Permissions.accessibility { print("⚠️  Accessibility / Device control is missing – posted events may be dropped.") }
+    let target = Displays.resolve(settings.displayID)
+    var lines = ["touchbridge CLI \(Updater.currentVersion)"]
+    let probe = RealTouchProbe(display: target) { line in print(line); lines.append(line) }
+    print("Do not touch mouse or screen for about 20 s.")
+    probe.run {
+        RealTouchProbe.append(lines)
+        print("Appended to \(RealTouchProbe.resultsURL.path)")
+        exit(0)
+    }
+    withExtendedLifetime(probe) { RunLoop.main.run() }
 }
 
 if mtProbe {

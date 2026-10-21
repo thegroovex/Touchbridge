@@ -36,6 +36,15 @@ final class UpdateTests: XCTestCase {
         XCTAssertNil(UpdateLogic.pickUpdate([rel("v0.9.0-beta.1")], current: "0.2.0", includePrereleases: false))
         XCTAssertEqual(UpdateLogic.pickUpdate([rel("v0.3.0-preview.2"), rel("v0.3.0-preview.10")],
                                               current: "0.3.0-preview.2", includePrereleases: true)?.tagName, "v0.3.0-preview.10")
+        // Betas (SemVer suffix) only for beta users
+        let withBeta = [rel("v0.3.10", pre: true), rel("v0.4.0-beta1", pre: true)]
+        XCTAssertEqual(UpdateLogic.pickUpdate(withBeta, current: "0.3.9", includePrereleases: true, includeBetas: false)?.tagName, "v0.3.10")
+        XCTAssertNil(UpdateLogic.pickUpdate(withBeta, current: "0.3.10", includePrereleases: true, includeBetas: false))
+        XCTAssertEqual(UpdateLogic.pickUpdate(withBeta, current: "0.3.10", includePrereleases: true, includeBetas: true)?.tagName, "v0.4.0-beta1")
+        XCTAssertFalse(UpdateLogic.betaDefault(current: "0.3.10"))
+        XCTAssertTrue(UpdateLogic.betaDefault(current: "0.4.0-beta1"))
+        XCTAssertEqual(SemVer("v0.4.0-beta1")?.description, "0.4.0-beta1")
+        XCTAssertLessThan(SemVer("0.4.0-beta1")!, SemVer("0.4.0")!)
     }
 
     func testAssetSelection() {

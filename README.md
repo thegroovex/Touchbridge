@@ -180,6 +180,18 @@ For a detailed report: Menu › **Record diagnostics** (touch the screen for 10 
 clipboard and saved as `TouchBridge-Diagnostics.txt` on your desktop – attach it to an
 [issue](https://github.com/thegroovex/Touchbridge/issues).
 
+## Real touch experiment (0.4 beta)
+
+Experimental, for testing on macOS 27: can macOS be made to deliver *real* touches (like Sidecar) instead of mouse events?
+
+- Menu › **Touch test window …** – a window that counts what apps receive: direct touches (real screen touches),
+  indirect touches (trackpad style), gesture recognizers, mouse and gesture events.
+- Menu › **Real touch experiment …** – opens the test window on the touch display and plays a tap, a drag and a
+  2-finger pinch in 5 variants (synthetic events with an attached HID digitizer payload, private macOS API).
+  Results are appended to `TouchBridge-RealTouch-Probe.txt` on your desktop. CLI: `touchbridge --touch-probe`.
+- Menu › **Bluetooth digitizer: let macOS handle it** – TouchBridge releases the Pi bridge so you can see in the test
+  window whether macOS handles the Bluetooth touchscreen by itself. Turn it off again to get TouchBridge back.
+
 ## Command line
 
 Menu › **Install command line tool** links `touchbridge` to `/usr/local/bin`. Examples:

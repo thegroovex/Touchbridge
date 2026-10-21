@@ -87,12 +87,15 @@ public enum UpdateLogic {
 
     /// Höchste Version > current (keine Entwürfe; Vorabversionen nur wenn erlaubt; übersprungene Version nicht).
     /// Nur Releases mit DMG-Asset kommen in Frage. Unlesbare aktuelle Version (z. B. „dev“) gilt als 0.0.0.
+    /// includeBetas: false hides versions with a SemVer pre-release suffix (0.4.0-beta1) even when GitHub
+    /// pre-releases are included – so users on a regular version are not offered betas.
     public static func pickUpdate(_ releases: [ReleaseInfo], current: String, includePrereleases: Bool,
-                                  skipped: String? = nil) -> ReleaseInfo? {
+                                  skipped: String? = nil, includeBetas: Bool = true) -> ReleaseInfo? {
         let cur = SemVer(current) ?? SemVer("0.0.0")!
         let skip = skipped.flatMap { SemVer($0) }
         return releases
             .filter { !$0.draft && (includePrereleases || (!$0.prerelease && !($0.version?.isPrerelease ?? true))) }
+            .filter { includeBetas || !($0.version?.isPrerelease ?? false) }
             .filter { r in r.version.map { $0 > cur && $0 != skip } ?? false }
             .filter { dmgAsset($0) != nil }
             .max { $0.version! < $1.version! }
@@ -130,6 +133,9 @@ public enum UpdateLogic {
     public static func hex(_ digest: [UInt8]) -> String { digest.map { String(format: "%02x", $0) }.joined() }
 
     /// Prüfintervall: fällig, wenn noch nie geprüft oder länger als `interval` her.
+    /// Default for "Include beta versions": on when the installed version itself is a beta (or unreadable/dev)
+    public static func betaDefault(current: String) -> Bool { SemVer(current)?.isPrerelease ?? true }
+
     public static func isCheckDue(lastCheck: Date?, now: Date, interval: TimeInterval = 24 * 3600) -> Bool {
         guard let l = lastCheck else { return true }
         return now.timeIntervalSince(l) >= interval || now < l

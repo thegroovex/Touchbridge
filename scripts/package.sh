@@ -7,8 +7,9 @@
 # Ohne TB_SIGN_IDENTITY (z. B. Pull Requests aus Forks, lokale Builds): ad-hoc (DR = cdhash, ändert sich je Build).
 # Aufruf: scripts/package.sh <version>   ->  dist/TouchBridge-<version>.dmg + dist/SHA256SUMS.txt
 set -euo pipefail
-ver="${1:-dev}"
 cd "$(dirname "$0")/.."
+# Version: argument (CI: release tag without "v"), otherwise the VERSION file (current development version)
+ver="${1:-$(cat VERSION 2>/dev/null || echo dev)}"
 swift build -c release --arch arm64 --arch x86_64
 bindir="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)"
 for b in TouchBridge TouchBridgeApp; do

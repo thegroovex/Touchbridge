@@ -1,4 +1,5 @@
 import Foundation
+import TouchBridgeCore
 import TouchBridgeKit
 
 enum SettingsStore {
@@ -20,6 +21,11 @@ enum SettingsStore {
     static var includePrereleases: Bool {
         get { UserDefaults.standard.object(forKey: "includePrereleases") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "includePrereleases") }
+    }
+    /// Offer versions like 0.4.0-beta1? Default: only when a beta is installed.
+    static var includeBetas: Bool {
+        get { UserDefaults.standard.object(forKey: "includeBetas") as? Bool ?? UpdateLogic.betaDefault(current: Updater.currentVersion) }
+        set { UserDefaults.standard.set(newValue, forKey: "includeBetas") }
     }
     static var skippedVersion: String? {
         get { UserDefaults.standard.string(forKey: "skippedVersion") }

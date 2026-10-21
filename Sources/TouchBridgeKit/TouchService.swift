@@ -278,6 +278,19 @@ public final class TouchService {
     }
     /// Wird im MIDI-Modus nach jedem Frame aufgerufen (Overlay-Anzeige).
     public var onMIDIUpdate: (() -> Void)?
+    /// Test option (not saved): leave Bluetooth digitizers (Pi bridge) to macOS – no seize, no processing –
+    /// to see whether macOS handles them natively. Toggling restarts the service (closing releases the seize).
+    public var releaseBluetoothDigitizer = false {
+        didSet {
+            guard releaseBluetoothDigitizer != oldValue else { return }
+            log(releaseBluetoothDigitizer ? "📶 Bluetooth digitizer released to macOS (TouchBridge ignores it)"
+                                          : "📶 Bluetooth digitizer handled by TouchBridge again")
+            if running { stop(); start() }
+        }
+    }
+    private static func isBluetooth(_ d: IOHIDDevice) -> Bool {
+        ((IOHIDDeviceGetProperty(d, kIOHIDTransportKey as CFString) as? String) ?? "").lowercased().hasPrefix("bluetooth")
+    }
     /// MIDI-Engine (nur im MIDI-Modus angelegt) – Layout, Finger und Werte für das Overlay.
     public private(set) var midiEngine: MIDIEngine?
     private var midiOutput: CoreMIDIOutput?
@@ -612,6 +625,13 @@ public final class TouchService {
         guard running, manager != nil else { return }
         // Gerät schon wieder weg (veraltete Registry-ID)? Dann nicht übernehmen
         if let id = HIDOpenRegistry.registryID(raw), !HIDOpenRegistry.isLive(id) { return }
+        if releaseBluetoothDigitizer && TouchService.isBluetooth(raw) {
+            if !quiet {
+                let name = (IOHIDDeviceGetProperty(raw, kIOHIDProductKey as CFString) as? String) ?? "Bluetooth device"
+                note("📶 \(name) (Bluetooth) left to macOS – not opened, not seized (test option)")
+            }
+            return
+        }
         pruneStale()
         // ein IOHIDDevice-Objekt pro Registry-ID, jedes Interface genau einmal
         let (device, rid) = registry.canonical(raw)

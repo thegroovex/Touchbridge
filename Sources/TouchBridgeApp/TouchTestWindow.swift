@@ -1,4 +1,5 @@
 import AppKit
+import TouchBridgeUSB
 import TouchBridgeCore
 import TouchBridgeKit
 
@@ -120,7 +121,10 @@ final class TouchTestController: NSObject, NSWindowDelegate, NSGestureRecognizer
         let click = NSClickGestureRecognizer(target: self, action: #selector(clicked(_:)))
         for g in [pan, mag, press, click] as [NSGestureRecognizer] {
             g.delegate = self
-            g.allowedTouchTypes = [.direct, .indirect]
+            // Gesture recognizers reject .indirect (NSInternalInconsistencyException); allow direct only.
+            if let err = tb_try({ g.allowedTouchTypes = [.direct] }) {
+                NSLog("TouchBridge: direct touches not allowed for %@: %@", "\(type(of: g))", err)
+            }
             view.addGestureRecognizer(g)
         }
 

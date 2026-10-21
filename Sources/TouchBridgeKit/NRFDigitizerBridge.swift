@@ -66,8 +66,8 @@ public final class NRFDigitizerBridge {
     // MARK: lifecycle
 
     public func start() {
-        queue.async {
-            guard !self.state.active else { return }
+        queue.async { [weak self] in
+            guard let self = self, !self.state.active else { return }
             self.state.active = true
             self.log("🔌 Digitizer output on – looking for \(NRFDigitizer.productName) (USB \(String(format: "%04x:%04x", NRFDigitizer.vendorID, NRFDigitizer.productID)))")
             let t = DispatchSource.makeTimerSource(queue: self.queue)

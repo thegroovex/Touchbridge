@@ -179,8 +179,12 @@ jobs:
             sleep 4
             kill -0 "$pid" && echo "TouchBridgeApp läuft (pid $pid)"
             kill "$pid"; wait "$pid" 2>/dev/null || true
+            pkill -f "$mnt/TouchBridge.app" 2>/dev/null || true
           } 2>&1 | tee ci-logs/verify.log
-          hdiutil detach "$mnt" || hdiutil detach -force "$mnt"
+          # The volume can stay busy for a moment after the app quits: retry, then force; fail only if still mounted
+          for i in 1 2 3 4 5; do hdiutil detach "$mnt" && break; sleep 2; done
+          if mount | grep -q " $mnt "; then hdiutil detach -force "$mnt" || true; fi
+          if mount | grep -q " $mnt "; then echo "::error::could not detach $mnt"; exit 1; fi
 
       - uses: actions/upload-artifact@v4
         with:

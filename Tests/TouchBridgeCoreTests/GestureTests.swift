@@ -304,6 +304,30 @@ final class GestureTests: XCTestCase {
         XCTAssertFalse(sink.events.contains { $0.hasPrefix("scroll") || $0.hasPrefix("mag") || $0.hasPrefix("rclick") })
     }
 
+    private func rotated(_ deg: CGFloat, radius r: CGFloat) -> [(CGFloat, CGFloat)] {
+        let a = deg * .pi / 180
+        return [(150 - r * cos(a), 100 - r * sin(a)), (150 + r * cos(a), 100 + r * sin(a))]
+    }
+
+    func testImperfectRotateIsNotTakenForPinch() {
+        // real hands: the finger distance drifts a little while turning
+        frame(rotated(0, radius: 150))
+        frame(rotated(5, radius: 154))
+        frame(rotated(10, radius: 158))
+        frame(rotated(16, radius: 162))
+        frame([])
+        XCTAssertTrue(sink.events.contains("rot 0.0 p1"))
+        XCTAssertFalse(sink.events.contains { $0.hasPrefix("mag") })
+    }
+
+    func testPinchStillWins() {
+        frame([(100, 100), (200, 100)])
+        frame([(90, 100), (210, 100)])
+        frame([(80, 101), (220, 99)])
+        frame([])
+        XCTAssertFalse(sink.events.contains { $0.hasPrefix("rot") })
+    }
+
     func testRotateDisabledFallsBackToNothing() {
         makeEngine { $0.rotate = false }
         frame(rotated(0))

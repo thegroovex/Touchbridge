@@ -380,12 +380,11 @@ public final class GestureEngine {
                 // wandert; beim Drehen ändert sich der Winkel, Abstand und Mittelpunkt bleiben
                 let spread = abs(d - d0), move = hypot(c.x - c0.x, c.y - c0.y)
                 let rot = abs(angleDiff(a, a0)) * 180 / CGFloat.pi
-                if spread > cfg.pinchThreshold || (spread > cfg.pinchThreshold * 0.5 && spread > move) {
-                    flushPendingRightClick(); cancelMayBegin()
-                    mode = .pinching; pinchRef = d
-                    if cfg.nativeZoom { poster.move(c); poster.magnify(0, phase: 1) }
-                } else if cfg.rotate && cfg.gestures[.rotate] != GestureAction.none && d > 40 && rot > cfg.rotateThreshold && move < cfg.scrollThreshold * 1.5
-                            && spread < cfg.pinchThreshold * 0.5 {
+                // Rotation first: when turning, the fingers rarely keep their distance exactly, so compare the arc
+                // they travelled with the distance change instead of requiring an almost constant spread.
+                let arc = rot * CGFloat.pi / 180 * d / 2
+                if cfg.rotate && cfg.gestures[.rotate] != GestureAction.none && d > 40 && rot > cfg.rotateThreshold
+                    && arc > spread && move < cfg.scrollThreshold * 1.5 {
                     flushPendingRightClick(); cancelMayBegin()
                     let act = cfg.gestures[.rotate]
                     if act == .rotate {
@@ -396,6 +395,10 @@ public final class GestureEngine {
                         GestureActionRunner.run(act, on: poster, at: c)
                         mode = .done
                     }
+                } else if spread > arc && (spread > cfg.pinchThreshold || (spread > cfg.pinchThreshold * 0.5 && spread > move)) {
+                    flushPendingRightClick(); cancelMayBegin()
+                    mode = .pinching; pinchRef = d
+                    if cfg.nativeZoom { poster.move(c); poster.magnify(0, phase: 1) }
                 } else if move > cfg.scrollThreshold && spread < move * 0.6 {
                     flushPendingRightClick()
                     startScroll(from: c, now)

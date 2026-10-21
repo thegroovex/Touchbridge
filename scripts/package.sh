@@ -24,6 +24,22 @@ app="dist/stage/TouchBridge.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bindir/TouchBridgeApp" "$app/Contents/MacOS/TouchBridgeApp"
 cp "$bindir/TouchBridge" "$app/Contents/MacOS/touchbridge"
+# SwiftPM's universal build (XCBuild) writes the deployment target into BOTH fields of LC_BUILD_VERSION
+# (minos 12.0, sdk 12.0) although it compiles against the selected SDK. AppKit's linked-on-or-after checks read
+# that sdk field (dyld program SDK version), so macOS 27 would treat TouchBridge as a macOS 12 app and give it
+# only mouse emulation instead of direct touches (TN3212). Set the sdk field to the SDK actually used; minos stays.
+sdkv="$(xcrun --sdk macosx --show-sdk-version 2>/dev/null || true)"
+if [ -n "$sdkv" ]; then
+  for f in "$app/Contents/MacOS/TouchBridgeApp" "$app/Contents/MacOS/touchbridge"; do
+    bv="$(otool -arch arm64 -l "$f" | grep -A5 LC_BUILD_VERSION)"
+    minos="$(echo "$bv" | awk '/ minos /{print $2; exit}')"; cur="$(echo "$bv" | awk '/ sdk /{print $2; exit}')"
+    if [ -n "$minos" ] && [ "$cur" != "$sdkv" ]; then
+      vtool -set-build-version macos "$minos" "$sdkv" -replace -output "$f.tmp" "$f"
+      mv "$f.tmp" "$f"
+      echo "LC_BUILD_VERSION of $(basename "$f"): sdk $cur -> $sdkv (minos $minos)"
+    fi
+  done
+fi
 build="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 num="$(echo "$ver" | grep -Eo '^[0-9]+(\.[0-9]+)*' || echo 0.0.0)"
 sed -e "s/__VERSION__/${num:-0.0.0}/" -e "s/__BUILD__/$build/" Resources/Info.plist > "$app/Contents/Info.plist"

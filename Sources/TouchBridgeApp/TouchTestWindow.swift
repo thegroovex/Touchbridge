@@ -237,10 +237,18 @@ final class TouchTestController: NSObject, NSWindowDelegate, NSGestureRecognizer
         dirty = true
     }
     @objc private func saveAction() {
-        RealTouchProbe.append(report(title: "Touch Test window (manual save)"))
+        let text = report(title: "Touch Test window (manual save)")
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text.joined(separator: "\n"), forType: .string)
+        let err = RealTouchProbe.append(text)
         let a = NSAlert()
-        a.messageText = L("Saved", "Gesichert")
-        a.informativeText = L("Appended to \"TouchBridge-RealTouch-Probe.txt\" on the desktop.", "An „TouchBridge-RealTouch-Probe.txt“ auf dem Schreibtisch angehängt.")
+        if let err = err {
+            a.messageText = L("Could not save the file", "Datei konnte nicht gesichert werden")
+            a.informativeText = L("The results were copied to the clipboard – just paste them into the chat.\n\n", "Die Ergebnisse sind in der Zwischenablage – einfach in den Chat einfügen.\n\n") + err
+        } else {
+            a.messageText = L("Saved", "Gesichert")
+            a.informativeText = L("Saved as \"TouchBridge-RealTouch-Probe.txt\" on the desktop and copied to the clipboard.", "Als „TouchBridge-RealTouch-Probe.txt“ auf dem Schreibtisch gesichert und in die Zwischenablage kopiert.")
+        }
         a.runModal()
     }
 

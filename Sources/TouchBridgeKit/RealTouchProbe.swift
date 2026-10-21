@@ -270,15 +270,25 @@ public final class RealTouchProbe {
         FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0].appendingPathComponent("TouchBridge-RealTouch-Probe.txt")
     }
 
-    public static func append(_ lines: [String]) {
+    /// Appends to the results file; returns nil on success, otherwise the error text.
+    @discardableResult
+    public static func append(_ lines: [String]) -> String? {
         let text = lines.joined(separator: "\n") + "\n\n"
         let url = resultsURL
-        if let h = try? FileHandle(forWritingTo: url) {
-            h.seekToEndOfFile()
-            h.write(Data(text.utf8))
-            h.closeFile()
-        } else {
-            try? text.write(to: url, atomically: true, encoding: .utf8)
+        do {
+            if FileManager.default.fileExists(atPath: url.path) {
+                let h = try FileHandle(forWritingTo: url)
+                h.seekToEndOfFile()
+                h.write(Data(text.utf8))
+                h.closeFile()
+            } else {
+                try text.write(to: url, atomically: true, encoding: .utf8)
+            }
+            NSLog("TouchBridge: probe results written to %@", url.path)
+            return nil
+        } catch {
+            NSLog("TouchBridge: could not write %@: %@", url.path, String(describing: error))
+            return String(describing: error)
         }
     }
 }

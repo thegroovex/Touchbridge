@@ -945,8 +945,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.statusItem.button?.title = ""
             self.updateIcon()
             let report = ["TouchBridge \(AppDelegate.version)"] + lines + self.touchTest.report(title: "Touch Test window counters after the experiment")
-            RealTouchProbe.append(report)
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(report.joined(separator: "\n"), forType: .string)
+            let err = RealTouchProbe.append(report)
             self.alert(L("Real touch experiment done", "Echtes-Touch-Experiment fertig"),
+                       (err == nil ? "" : L("Could not save the file (\(err!)) – the results are on the clipboard, just paste them into the chat.\n\n", "Datei konnte nicht gesichert werden (\(err!)) – die Ergebnisse sind in der Zwischenablage, einfach in den Chat einfügen.\n\n")) +
                        L("The counters per variant are shown in the Touch Test window. Results were appended to \"TouchBridge-RealTouch-Probe.txt\" on the desktop – please send that file.",
                          "Die Zähler je Variante stehen im Touch-Testfenster. Die Ergebnisse wurden an „TouchBridge-RealTouch-Probe.txt“ auf dem Schreibtisch angehängt – bitte diese Datei schicken."))
         }

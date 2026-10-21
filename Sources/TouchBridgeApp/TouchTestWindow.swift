@@ -284,7 +284,8 @@ final class TouchTestController: NSObject, NSWindowDelegate, NSGestureRecognizer
             if #available(macOS 10.15, *) { name = s.localizedName } else { name = "Screen \(id)" }
             var caps: [String] = []
             for sel in selectors where s.responds(to: NSSelectorFromString(sel)) {
-                caps.append("\(sel)=\(s.value(forKey: sel).map { "\($0)" } ?? "nil")")
+                // Only report presence: value(forKey:) raises for unknown struct return types
+                caps.append("\(sel)=present")
             }
             out.append("Screen \(name) (id \(id)): " + (caps.isEmpty ? "no touch capability API" : caps.joined(separator: ", ")))
         }

@@ -904,11 +904,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func openTouchTest() {
-        prepareTouchTest()
-        touchTest.show(on: service.targetDisplay)
+        NSLog("TouchBridge: open Touch Test window")
+        // Run after the status menu has finished tracking – showing windows from inside the menu action can silently fail
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.prepareTouchTest()
+            self.touchTest.show(on: self.service.targetDisplay)
+        }
     }
 
     @objc private func runRealTouchExperiment() {
+        NSLog("TouchBridge: real touch experiment requested")
+        DispatchQueue.main.async { [weak self] in self?.confirmRealTouchExperiment() }
+    }
+
+    private func confirmRealTouchExperiment() {
         NSApp.activate(ignoringOtherApps: true)
         let a = NSAlert()
         a.messageText = L("Start real touch experiment?", "Echtes-Touch-Experiment starten?")
@@ -917,6 +927,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             "TouchBridge öffnet das Touch-Testfenster auf dem Touch-Bildschirm und spielt dann Tippen, Ziehen und 2-Finger-Pinch in 5 Varianten ab (ca. 20 s) – synthetische Events mit angehängtem HID-Digitizer-Payload. Bitte währenddessen Maus und Bildschirm nicht berühren. Der Zeiger bewegt sich, das Testfenster kann Klicks bekommen.\n\nDie Ergebnisse werden an „TouchBridge-RealTouch-Probe.txt“ auf dem Schreibtisch angehängt.")
         a.addButton(withTitle: "Start")
         a.addButton(withTitle: L("Cancel", "Abbrechen"))
+        a.window.level = .modalPanel
         guard a.runModal() == .alertFirstButtonReturn else { return }
         openTouchTest()
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.startRealTouchProbe() }

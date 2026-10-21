@@ -52,8 +52,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             window = w
         }
         window?.title = L("TouchBridge Settings", "TouchBridge-Einstellungen")
-        NSApp.activate(ignoringOtherApps: true)
-        window?.makeKeyAndOrderFront(nil)
+        if let w = window { WindowFront.bring(w) }
     }
 
     /// Settings changed elsewhere (menu)

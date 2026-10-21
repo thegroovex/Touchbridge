@@ -93,8 +93,7 @@ final class TouchTestController: NSObject, NSWindowDelegate, NSGestureRecognizer
             let size = NSSize(width: min(f.width * 0.8, 1100), height: min(f.height * 0.8, 760))
             w.setFrame(NSRect(x: f.midX - size.width / 2, y: f.midY - size.height / 2, width: size.width, height: size.height), display: true)
         }
-        NSApp.activate(ignoringOtherApps: true)
-        w.makeKeyAndOrderFront(nil)
+        WindowFront.bring(w)
         w.makeFirstResponder(view)
         startMonitoring()
     }

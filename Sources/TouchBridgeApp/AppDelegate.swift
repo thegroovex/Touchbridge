@@ -8,8 +8,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let menu = NSMenu()
     private var service: TouchService!
     private var settings = SettingsStore.load() {
-        didSet { SettingsStore.save(settings); service.settings = settings; refreshControl(); updateOverlay(); updateIcon() }
+        didSet { SettingsStore.save(settings); service.settings = settings; refreshControl(); updateOverlay(); updateIcon(); settingsWindow?.sync(settings) }
     }
+    /// Settings window (created on first use)
+    private var settingsWindow: SettingsWindowController?
+    /// Touch context menu + smart target (GestureEngine delegate; the service only holds it weakly)
+    private var interaction: TouchInteraction?
     private let overlay = MIDIOverlay()
     private var control: DisplayControl?
     private var controlDisplay: CGDirectDisplayID = 0
@@ -45,6 +49,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         service.log = { [weak self] line in self?.appendLog(line) }
         service.onStatus = { [weak self] _ in self?.updateIcon() }
         service.onMIDIUpdate = { [weak self] in self?.refreshOverlayContent() }
+        let ti = TouchInteraction(settings: { [weak self] in self?.settings ?? TouchSettings() },
+                                  log: { [weak self] line in self?.appendLog(line) })
+        interaction = ti
+        service.gestureDelegate = ti
+        installMainMenu()
 
         // Dialoge nur EINMAL (gemerkt); danach nur Hinweis im Menü – kein Prompt bei jedem Start
         Permissions.requestAccessibilityOnce()
@@ -392,6 +401,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(action(L("Remove old LaunchAgent", "Alten LaunchAgent entfernen"), #selector(removeLegacyAgent)))
         }
         menu.addItem(toggle(L("Touch enabled", "Touch aktiv"), settings.enabled, #selector(toggleEnabled), key: "t"))
+        menu.addItem(action(L("Settings …", "Einstellungen …"), #selector(openSettings), key: ","))
         menu.addItem(.separator())
 
         // Modus
@@ -566,17 +576,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             m.addItem(i)
         }
         line(L("Tap → Click", "Tippen → Klick"))
-        line(L("Long press → Right click", "Lange halten → Rechtsklick"))
-        line(L("2-finger tap → Right click", "2-Finger-Tippen → Rechtsklick"))
         line(L("2-finger drag → Scroll", "2-Finger-Ziehen → Scrollen"))
         line(L("2-finger pinch → Zoom", "2-Finger-Pinch → Zoomen"))
-        line(L("2-finger rotate → Rotate", "2-Finger-Drehen → Drehen"))
         m.addItem(.separator())
         for t in GestureTrigger.allCases {
             line("\(t.title) → \(settings.gestures[t].title)")
         }
         m.addItem(.separator())
-        line(L("Editing gestures follows in a later version", "Gesten bearbeiten folgt in einer späteren Version"))
+        m.addItem(action(L("Edit gestures …", "Gesten bearbeiten …"), #selector(openSettings)))
         return m
     }
 
@@ -658,7 +665,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleMomentum() { settings.momentumScroll.toggle() }
     @objc private func toggleHidePointer() { settings.hidePointer.toggle() }
     @objc private func selectLanguage(_ sender: NSMenuItem) {
-        L10n.set(AppLanguage.allCases[sender.tag]); updateIcon()
+        L10n.set(AppLanguage.allCases[sender.tag]); updateIcon(); settingsWindow?.languageChanged()
     }
     @objc private func toggleSuppress() { settings.suppressSystemPointer.toggle() }
     @objc private func toggleFlipX() { settings.flipX.toggle() }
@@ -739,6 +746,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func quit() { NSApp.terminate(nil) }
+
+    // MARK: - Settings window
+
+    @objc private func openSettings() {
+        if settingsWindow == nil {
+            let model = SettingsModel(settings: settings,
+                                      apply: { [weak self] s in
+                                          guard let self = self, self.settings != s else { return }
+                                          self.settings = s
+                                      },
+                                      onLanguage: { [weak self] _ in self?.updateIcon(); self?.settingsWindow?.languageChanged() },
+                                      openAccessibility: { [weak self] in self?.openAccessibility() })
+            settingsWindow = SettingsWindowController(model: model)
+        }
+        settingsWindow?.show()
+    }
+
+    /// Invisible main menu (accessory app): gives the settings window Cmd-, / Cmd-W / Cmd-Q and Edit shortcuts
+    private func installMainMenu() {
+        let main = NSMenu()
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: L("Settings …", "Einstellungen …"), action: #selector(openSettings), keyEquivalent: ",").target = self
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: L("Quit TouchBridge", "TouchBridge beenden"), action: #selector(quit), keyEquivalent: "q").target = self
+        appItem.submenu = appMenu
+        main.addItem(appItem)
+        let editItem = NSMenuItem()
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = edit
+        main.addItem(editItem)
+        let winItem = NSMenuItem()
+        let win = NSMenu(title: "Window")
+        win.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        winItem.submenu = win
+        main.addItem(winItem)
+        NSApp.mainMenu = main
+    }
 
     /// 10-Sekunden-Diagnose: Touch-Dienst läuft weiter (stumm); bereits geöffnete Interfaces werden nur mitbeobachtet,
     /// alle übrigen HID-Interfaces des Touch-Monitors nicht exklusiv geöffnet, Input Mode gesetzt und Rohreports protokolliert; dazu DDC-Probe.

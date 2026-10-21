@@ -118,9 +118,9 @@ To remove it: `curl -fsSL https://raw.githubusercontent.com/thegroovex/Touchbrid
 
 | Gesture | Action |
 |---|---|
-| Tap with 1 finger | Click (tap twice = double-click) |
+| Tap with 1 finger | Click (tap twice = double-click); taps just next to a button, checkbox, link or field snap onto it (Smart target) |
 | Drag with 1 finger | Drag / select / move windows |
-| Hold 1 finger (~0.5 s) | Right-click |
+| Hold 1 finger (~0.5 s) | Touch context menu: the item's own menu, or large rows with its actions plus Copy / Paste / Right click |
 | Tap with 2 fingers | Right-click (after a short pause, so a double tap can be recognised) * |
 | Double-tap with 2 fingers | Smart zoom * |
 | Slide 2 fingers | Scroll with momentum and rubber-banding, like a trackpad * |
@@ -135,7 +135,12 @@ To remove it: `curl -fsSL https://raw.githubusercontent.com/thegroovex/Touchbrid
 
 Menu options: **Language** (English/Deutsch), **1-finger drag scrolls** (instead of dragging), **Pinch = trackpad zoom** (off: sends Cmd + / Cmd −
 instead), **Momentum scrolling**, **Hide pointer while touching** (comes back when you move a real mouse or trackpad), scroll direction and
-speed, screen orientation (Touch › Orientation). **Touch › Gestures** lists which gesture does what. Mission Control, App Exposé and Spaces use
+speed, screen orientation (Touch › Orientation). **Touch › Gestures** lists which gesture does what.
+
+**Settings … (⌘,)** opens the settings window: *General* (the toggles above, language), *Gestures* (choose an action for every
+gesture: system actions, click / right click / middle click, a recorded keyboard shortcut, open an app, or nothing; *Reset to
+defaults*), *Touch* (Smart target on/off and search radius, touch context menu on/off, hold time) and *About*. Smart target and the
+touch context menu need the Accessibility permission. Mission Control, App Exposé and Spaces use
 the system shortcuts Ctrl ↑ / Ctrl ↓ / Ctrl ← → and Show desktop uses F11 – keep them enabled in System Settings › Keyboard › Keyboard Shortcuts.
 
 ## MIDI mode

@@ -32,6 +32,11 @@ public extension EventSink {
     func rotate(_ degrees: Double, phase: Int64) {}
     func smartZoom(at p: CGPoint) {}
     func openApp(_ candidates: [String]) {}
+    /// Middle (other) mouse button click
+    func middleClick(_ p: CGPoint) {
+        mouse(.otherMouseDown, p, .center, clicks: 1)
+        mouse(.otherMouseUp, p, .center, clicks: 1)
+    }
     func mouse(_ type: CGEventType, _ p: CGPoint, _ button: CGMouseButton) { mouse(type, p, button, clicks: 1) }
     func click(_ p: CGPoint, right: Bool = false) { click(p, right: right, clicks: 1) }
 }
@@ -220,10 +225,16 @@ public struct GestureConfig {
     public var gestures = GestureMap.defaults
 }
 
-/// Erweiterungspunkt für Phase 2 (Touch-Kontextmenü)
+/// Hooks for the app: touch context menu (long press) and smart target (tap snapping)
 public protocol GestureEngineDelegate: AnyObject {
-    /// Langes Halten ohne Bewegung. true = selbst behandelt, sonst sendet TouchBridge einen Rechtsklick.
+    /// Long press without movement (slot action "Touch context menu"). true = handled, otherwise a right click is sent.
     func onLongPress(at point: CGPoint) -> Bool
+    /// Where a one-finger tap should click (smart target). Default: unchanged.
+    func tapTarget(for point: CGPoint) -> CGPoint
+}
+
+public extension GestureEngineDelegate {
+    func tapTarget(for point: CGPoint) -> CGPoint { point }
 }
 
 public final class GestureEngine {
@@ -373,11 +384,18 @@ public final class GestureEngine {
                     flushPendingRightClick(); cancelMayBegin()
                     mode = .pinching; pinchRef = d
                     if cfg.nativeZoom { poster.move(c); poster.magnify(0, phase: 1) }
-                } else if cfg.rotate && d > 40 && rot > cfg.rotateThreshold && move < cfg.scrollThreshold * 1.5
+                } else if cfg.rotate && cfg.gestures[.rotate] != GestureAction.none && d > 40 && rot > cfg.rotateThreshold && move < cfg.scrollThreshold * 1.5
                             && spread < cfg.pinchThreshold * 0.5 {
                     flushPendingRightClick(); cancelMayBegin()
-                    mode = .rotating; rotRef = a
-                    poster.move(c); poster.rotate(0, phase: 1)
+                    let act = cfg.gestures[.rotate]
+                    if act == .rotate {
+                        mode = .rotating; rotRef = a
+                        poster.move(c); poster.rotate(0, phase: 1)
+                    } else {
+                        // remapped: fire once per gesture
+                        GestureActionRunner.run(act, on: poster, at: c)
+                        mode = .done
+                    }
                 } else if move > cfg.scrollThreshold && spread < move * 0.6 {
                     flushPendingRightClick()
                     startScroll(from: c, now)
@@ -495,10 +513,11 @@ public final class GestureEngine {
         poster.scroll(dx: 0, dy: 0, phase: 8)
     }
 
+    /// Runs the (held back) 2-finger tap action – right click by default
     private func flushPendingRightClick() {
         guard let p = pendingRightClick else { return }
         pendingRightClick = nil
-        poster.click(p.p, right: true)
+        GestureActionRunner.run(cfg.gestures[.twoFingerTap], on: poster, at: p.p)
     }
 
     /// Laufende 2-Finger-Geste (Scrollen, Pinch, Drehen) sauber beenden
@@ -517,12 +536,17 @@ public final class GestureEngine {
         if momentumState != nil { stepMomentum(now) }
         if let p = pendingRightClick, mode == .idle, now - p.t >= cfg.twoFingerDoubleTapInterval {
             pendingRightClick = nil
-            poster.click(p.p, right: true)
+            GestureActionRunner.run(cfg.gestures[.twoFingerTap], on: poster, at: p.p)
         }
         guard mode == .oneFinger else { return }
         if now - startTime >= cfg.longPress {
             mode = .longPressed
-            if delegate?.onLongPress(at: startPoint) != true { poster.click(startPoint, right: true) }
+            let act = cfg.gestures[.longPress]
+            if act == .contextMenu {
+                if delegate?.onLongPress(at: startPoint) != true { poster.click(startPoint, right: true) }
+            } else {
+                GestureActionRunner.run(act, on: poster, at: startPoint)
+            }
         }
     }
 
@@ -535,7 +559,8 @@ public final class GestureEngine {
                    hypot(startPoint.x - lastTapPoint.x, startPoint.y - lastTapPoint.y) < 30 {
                     tapCount += 1
                 } else { tapCount = 1 }
-                poster.click(startPoint, right: false, clicks: tapCount)
+                let target = delegate?.tapTarget(for: startPoint) ?? startPoint
+                poster.click(target, right: false, clicks: tapCount)
                 lastTapTime = now; lastTapPoint = startPoint
             }
         case .dragging:
@@ -549,7 +574,8 @@ public final class GestureEngine {
                 } else {
                     flushPendingRightClick()
                     // Rechtsklick zurückhalten, falls ein zweiter Tap (Doppeltippen) folgt
-                    if double != GestureAction.none { pendingRightClick = (p: c0, t: now) } else { poster.click(c0, right: true) }
+                    if double != GestureAction.none { pendingRightClick = (p: c0, t: now) }
+                    else { GestureActionRunner.run(cfg.gestures[.twoFingerTap], on: poster, at: c0) }
                 }
             } else {
                 flushPendingRightClick()

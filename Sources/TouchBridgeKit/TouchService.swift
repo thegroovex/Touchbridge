@@ -49,12 +49,21 @@ public struct TouchSettings: Codable, Equatable {
     public var hidePointer = true
     /// Mehrfinger-Gesten -> Aktionen (Phase 2: Gesten-Editor)
     public var gestures = GestureMap.defaults
+    /// Smart target: taps next to a control snap onto it (Accessibility hit test)
+    public var smartTarget = true
+    /// Smart target search radius (points)
+    public var smartTargetRadius = 10.0
+    /// Long press opens the touch context menu (off: right click)
+    public var contextMenu = true
+    /// Hold time for a long press (seconds)
+    public var longPressDuration = 0.5
     public init() {}
 
     enum CodingKeys: String, CodingKey {
         case enabled, displayID, rotation, flipX, flipY, swapXY, invertScroll, scrollGain, seize, vid, pid
         case mode, midiLayout, mpe, midiChannel, baseNote, scale, bendRange, showOverlay, suppressSystemPointer
         case seizeTouchOnly, oneFingerScroll, mtSequence, nativeZoom, momentumScroll, hidePointer, gestures
+        case smartTarget, smartTargetRadius, contextMenu, longPressDuration
     }
 
     /// Fehlende Schlüssel (ältere gespeicherte Einstellungen) fallen auf die Standardwerte zurück.
@@ -89,6 +98,10 @@ public struct TouchSettings: Codable, Equatable {
         momentumScroll = v(.momentumScroll, d.momentumScroll)
         hidePointer = v(.hidePointer, d.hidePointer)
         gestures = v(.gestures, d.gestures)
+        smartTarget = v(.smartTarget, d.smartTarget)
+        smartTargetRadius = max(2, min(40, v(.smartTargetRadius, d.smartTargetRadius)))
+        contextMenu = v(.contextMenu, d.contextMenu)
+        longPressDuration = max(0.25, min(2, v(.longPressDuration, d.longPressDuration)))
     }
     public var multitouchSequence: MultitouchSequence? { mtSequence.flatMap(MultitouchSequence.init(rawValue:)) }
 
@@ -101,6 +114,7 @@ public struct TouchSettings: Codable, Equatable {
         g.nativeZoom = nativeZoom
         g.momentumScroll = momentumScroll
         g.gestures = gestures
+        g.longPress = longPressDuration
         return g
     }
     public var midiConfig: MIDIConfig {

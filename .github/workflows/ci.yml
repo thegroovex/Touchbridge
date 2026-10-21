@@ -11,8 +11,11 @@ name: CI
 #                cache via actions/cache; TouchBridge.app is packed into a DMG, mounted and verified
 #                (bundle layout, Info.plist, code signature, CLI inside the bundle); uploaded as artefact.
 #   test-intel   swift test on an Intel runner (x86_64 behaviour of the parser / gestures).
+#   firmware     firmware/nrf-digitizer (Zephyr, nRF52840 digitizer dongle): host test of the protocol code, UF2
+#                for s140v6-0x26000 / s140v7-0x27000 / nosd-0x1000; firmware-package bundles them as artefact
+#                "touchbridge-digitizer-uf2" (BUILDINFO.txt, SHA256SUMS-firmware.txt).
 #   release      on a published GitHub release: the DMG is built with the release tag as version
-#                and attached together with SHA256SUMS.txt.
+#                and attached together with the three dongle UF2 files and SHA256SUMS.txt (DMG + UF2).
 # Signing: secrets TB_SIGN_P12 (base64 .p12) + TB_SIGN_P12_PASSWORD hold the self-signed certificate
 # "TouchBridge Self-Signed (groovex)"; scripts/ci-keychain.sh imports it into a temporary keychain and
 # package.sh signs with a fixed designated requirement (identifier + certificate leaf) so macOS keeps
@@ -230,10 +233,167 @@ jobs:
       - name: Tests
         run: swift test --parallel
 
+  # ---------------------------------------------------------------------------------- nRF52840 dongle firmware
+  # firmware/nrf-digitizer (Zephyr): UF2 for the three bootloader layouts of the Pro Micro nRF52840 /
+  # nice!nano v2 (same approach as the Auracaster dongle), plus a native host test of the protocol code.
+  firmware:
+    name: Firmware UF2 ${{ matrix.variant }}
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      WS: ${{ github.workspace }}/../zws
+      ZEPHYR_TOOLCHAIN_VARIANT: zephyr
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # S140 v6.1.1 (original nice!nano bootloader): app at 0x26000
+          - { variant: s140v6-0x26000, board: promicro_nrf52840/nrf52840/uf2, overlay: '',             start: '0x26000' }
+          # S140 v7.x bootloaders: app at 0x27000
+          - { variant: s140v7-0x27000, board: promicro_nrf52840/nrf52840/uf2, overlay: 'sdv7.overlay', start: '0x27000' }
+          # bootloader without SoftDevice ("SoftDevice: not found"): app at 0x1000
+          - { variant: nosd-0x1000,    board: promicro_nrf52840/nrf52840,     overlay: '',             start: '0x1000' }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Host test (protocol parser + HID report builder)
+        working-directory: firmware/nrf-digitizer/tests
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -I../src ../src/tb_proto.c ../src/tb_report.c proto_test.c -o proto_test
+          ./proto_test
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache west modules (zephyr, hal_nordic, cmsis)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.WS }}/zephyr
+            ${{ env.WS }}/modules
+            ${{ env.WS }}/.west
+          key: west-digitizer-${{ hashFiles('firmware/nrf-digitizer/west.yml') }}
+
+      - name: Prepare west workspace
+        run: |
+          set -euo pipefail
+          mkdir -p "$WS"
+          rm -rf "$WS/nrf-digitizer" && cp -r firmware/nrf-digitizer "$WS/nrf-digitizer"
+          pip install --quiet west
+          cd "$WS"
+          [ -d .west ] || west init -l nrf-digitizer
+          west update --narrow -o=--depth=1
+          pip install --quiet -r zephyr/scripts/requirements-base.txt
+          echo "SDK_VERSION=$(cat zephyr/SDK_VERSION)" >> "$GITHUB_ENV"
+
+      - name: Cache Zephyr SDK
+        id: sdk-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/zephyr-sdk-${{ env.SDK_VERSION }}
+          key: zephyr-sdk-${{ env.SDK_VERSION }}-linux-x86_64-arm
+
+      - name: Install Zephyr SDK (minimal + arm-zephyr-eabi)
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          base="https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v${SDK_VERSION}"
+          cd ~
+          curl -fsSL "$base/zephyr-sdk-${SDK_VERSION}_linux-x86_64_minimal.tar.xz" | tar xJ
+          mkdir -p "zephyr-sdk-${SDK_VERSION}/gnu"
+          curl -fsSL "$base/toolchain_gnu_linux-x86_64_arm-zephyr-eabi.tar.xz" | tar xJ -C "zephyr-sdk-${SDK_VERSION}/gnu"
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          export ZEPHYR_SDK_INSTALL_DIR="$HOME/zephyr-sdk-${SDK_VERSION}"
+          cd "$WS"
+          extra=""
+          [ -n "${{ matrix.overlay }}" ] && extra="-DEXTRA_DTC_OVERLAY_FILE=$WS/nrf-digitizer/${{ matrix.overlay }}"
+          set +e
+          west build -p always -b ${{ matrix.board }} -d build/out nrf-digitizer -- $extra > build.log 2>&1
+          rc=$?
+          set -e
+          if [ $rc -ne 0 ]; then
+            { grep -E "(error|Error|ERROR)[: ]" build.log | grep -v "^--" | head -n 20 | while read -r l; do echo "::error title=firmware ${{ matrix.variant }}::$l"; done; } || true
+            tail -n 60 build.log
+            exit $rc
+          fi
+          grep -E "warning:" build.log | grep -v "^--" | head -n 20 || true
+          tail -n 12 build.log
+
+      - name: Check and collect
+        run: |
+          set -euo pipefail
+          cd "$WS"
+          chk=nrf-digitizer/scripts/uf2info.py
+          dist="${GITHUB_WORKSPACE}/dist"; mkdir -p "$dist"
+          name="touchbridge-digitizer-${{ matrix.variant }}"
+          python3 $chk build/out/zephyr/zephyr.uf2 --expect-start ${{ matrix.start }}
+          cp build/out/zephyr/zephyr.uf2 "$dist/$name.uf2"
+          {
+            echo "== ${{ matrix.variant }} =="
+            python3 $chk "$dist/$name.uf2"
+            grep -E '^CONFIG_(USB_DEVICE_STACK_NEXT|USBD_HID_SUPPORT|USBD_CDC_ACM_CLASS|FLASH_LOAD_OFFSET)=' build/out/zephyr/.config || true
+            echo "zephyr: $(cd zephyr && grep -E '^(VERSION_MAJOR|VERSION_MINOR|PATCHLEVEL)' VERSION | awk '{print $3}' | paste -sd. -) sdk: ${SDK_VERSION}"
+          } > "$dist/info-${{ matrix.variant }}.txt"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uf2-${{ matrix.variant }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 3
+
+  firmware-package:
+    name: Package touchbridge-digitizer-uf2
+    needs: firmware
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: firmware
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: uf2-*
+          merge-multiple: true
+          path: dist
+      - name: BUILDINFO + checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          ver="$(awk -F' = ' '/^VERSION_MAJOR/{a=$2}/^VERSION_MINOR/{b=$2}/^PATCHLEVEL/{c=$2}END{print a"."b"."c}' ../firmware/nrf-digitizer/VERSION)"
+          {
+            echo "TouchBridge Digitizer firmware ${ver}"
+            echo "commit:  ${GITHUB_SHA}"
+            echo "board:   promicro_nrf52840 (Pro Micro nRF52840 / nice!nano v2 compatible)"
+            echo "USB:     2fe3:0010 \"TouchBridge Digitizer\" (CDC ACM + HID touch screen)"
+            echo
+            echo "Which file? Open INFO_UF2.TXT on the bootloader drive (double reset):"
+            echo "  SoftDevice: S140 version 6.x.x -> touchbridge-digitizer-s140v6-0x26000.uf2"
+            echo "  SoftDevice: S140 version 7.x.x -> touchbridge-digitizer-s140v7-0x27000.uf2"
+            echo "  SoftDevice: not found          -> touchbridge-digitizer-nosd-0x1000.uf2"
+            echo
+            cat info-*.txt
+          } > BUILDINFO.txt
+          rm info-*.txt
+          test "$(ls touchbridge-digitizer-*.uf2 | wc -l)" -eq 3
+          sha256sum touchbridge-digitizer-*.uf2 > SHA256SUMS-firmware.txt
+          cat BUILDINFO.txt SHA256SUMS-firmware.txt; ls -l
+      - uses: actions/upload-artifact@v4
+        with:
+          name: touchbridge-digitizer-uf2
+          path: dist/
+          if-no-files-found: error
+          retention-days: 90
+
   # ---------------------------------------------------------------------------------- release
   release:
     name: Attach release package
-    needs: [build-test, test-intel]
+    needs: [build-test, test-intel, firmware-package]
     if: github.event_name == 'release'
     runs-on: xcode-27
     permissions:
@@ -252,16 +412,26 @@ jobs:
       - name: Remove signing keychain
         if: always()
         run: '[ -n "${TB_SIGN_KEYCHAIN:-}" ] && security delete-keychain "$TB_SIGN_KEYCHAIN" || true'
+      - uses: actions/download-artifact@v4
+        with:
+          name: touchbridge-digitizer-uf2
+          path: dist-fw
+      - name: Add dongle firmware (UF2) to the package and SHA256SUMS.txt
+        run: |
+          set -euo pipefail
+          cp dist-fw/touchbridge-digitizer-*.uf2 dist/
+          cp dist-fw/BUILDINFO.txt dist/touchbridge-digitizer-BUILDINFO.txt
+          (cd dist && shasum -a 256 touchbridge-digitizer-*.uf2 >> SHA256SUMS.txt && cat SHA256SUMS.txt)
       - name: Upload to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$GITHUB_REF_NAME" dist/*.dmg dist/SHA256SUMS.txt --clobber --repo "$GITHUB_REPOSITORY"
+        run: gh release upload "$GITHUB_REF_NAME" dist/*.dmg dist/touchbridge-digitizer-*.uf2 dist/touchbridge-digitizer-BUILDINFO.txt dist/SHA256SUMS.txt --clobber --repo "$GITHUB_REPOSITORY"
 
   # ---------------------------------------------------------------------------------- gate
   result:
     name: CI result
     if: always()
-    needs: [changes, docs-only, build-test, test-intel, release]
+    needs: [changes, docs-only, build-test, test-intel, firmware, firmware-package, release]
     runs-on: ubuntu-latest
     steps:
       - name: All jobs passed or were skipped on purpose

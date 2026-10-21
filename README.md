@@ -112,6 +112,31 @@ From now on: power on the Pi, connect HDMI – the Pi reconnects to your Mac by 
 Run the same install line again (step 2.2). It updates the bridge and keeps your pairing.
 To remove it: `curl -fsSL https://raw.githubusercontent.com/thegroovex/Touchbridge/main/scripts/pi/install-bt-bridge.sh | sudo bash -s -- --uninstall`
 
+## 2c. Experimental: nRF52840 digitizer dongle (macOS handles touch)
+
+Instead of TouchBridge turning touches into synthetic mouse/gesture events, a small **nRF52840 board** plugged into
+the Mac can present the touches to macOS as a **real USB touch screen**. macOS 27 treats real HID digitizers as
+direct touch (pointer hidden, Apple's touch emulation – TN3212), which synthetic events cannot achieve.
+
+```
+Anmite touch ──USB──▶ Mac (TouchBridge) ──USB serial──▶ nRF52840 dongle ──USB HID touch screen──▶ macOS
+```
+
+1. **Board:** "Pro Micro nRF52840" (nice!nano v2 clone, UF2 bootloader), e.g. the one used for the Auracaster dongle.
+2. **Firmware:** download `touchbridge-digitizer-*.uf2` from the release (or the CI artefact
+   `touchbridge-digitizer-uf2`). Double-reset the board (short RST–GND twice), open `INFO_UF2.TXT` on the drive and copy
+   the matching file: S140 6.x → `s140v6-0x26000`, S140 7.x → `s140v7-0x27000`, "not found" → `nosd-0x1000`.
+   Details, LED codes and the serial protocol: [firmware/nrf-digitizer](firmware/nrf-digitizer/README.md).
+3. Keep the Anmite's USB on the Mac as before and plug the dongle into the Mac as well.
+4. Menu › **Output › Digitizer dongle (macOS handles touch)**. The menu shows
+   *Digitizer dongle: connected (firmware 0.1.0, …)*. TouchBridge now only forwards finger positions (up to 120 Hz,
+   10 fingers); it posts **no** gestures or mouse events of its own. If the dongle is missing nothing happens –
+   switch back to **Gestures (synthetic events)**.
+5. **Which screen?** macOS decides which display a USB touch screen belongs to. If touches land on the wrong
+   screen, try Menu › Output › **Dongle covers › Main display** or **All displays**.
+
+CLI: `touchbridge --digitizer [--digitizer-space touch|main|all]`.
+
 ---
 
 ## Gestures

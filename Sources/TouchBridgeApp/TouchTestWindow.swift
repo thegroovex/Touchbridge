@@ -12,6 +12,15 @@ struct TouchCounters {
     var eventTypes: [UInt: Int] = [:]
     /// Sums of NSEvent.rotation (degrees) and .magnification seen by the event monitor
     var rotationSum = 0.0, magnificationSum = 0.0, rotationZero = 0
+    /// Rotation recognizer actions and recognizer values (largest absolute value, value at the last action)
+    var rotation = 0
+    var recRotationMax = 0.0, recRotationLast = 0.0, recMagnificationMax = 0.0, recMagnificationLast = 0.0, panTranslationMax = 0.0
+    /// delegate gestureRecognizer(_:shouldReceive:) calls per recognizer and the most distinct touches seen at once
+    var shouldReceiveByRecognizer: [String: Int] = [:]
+    var delegateMaxSimultaneous = 0
+    /// Custom NSGestureRecognizer subclass (touchesBegan/Moved/Ended/Cancelled): touch callbacks, touches by type,
+    /// touches begun and the most fingers down at once
+    var counterEvents = 0, counterDirect = 0, counterIndirect = 0, counterOther = 0, counterBegan = 0, counterMaxFingers = 0
 
     var line: String {
         let types = eventTypes.sorted { $0.key < $1.key }.map { "\(TouchCounters.name($0.key))×\($0.value)" }.joined(separator: " ")
@@ -21,6 +30,13 @@ struct TouchCounters {
             + " | mouse \(mouse) scroll \(scroll) magnifyEv \(magnifyEvents) rotateEv \(rotateEvents) swipeEv \(swipeEvents) smartMagnify \(smartMagnify)"
             + " | NSEvent types: " + (types.isEmpty ? "-" : types)
             + String(format: " | rotation sum %.1f° (zero-valued %d) magnification sum %.3f", rotationSum, rotationZero, magnificationSum)
+            + "\n    recognizer delegate shouldReceive: " + (shouldReceiveByRecognizer.isEmpty ? "-" :
+                shouldReceiveByRecognizer.sorted { $0.key < $1.key }.map { "\($0.key)×\($0.value)" }.joined(separator: " "))
+            + " | max simultaneous touches (delegate) \(delegateMaxSimultaneous)"
+            + "\n    touch counter recognizer: callbacks \(counterEvents), touches direct \(counterDirect) / indirect \(counterIndirect)"
+            + (counterOther > 0 ? " / other \(counterOther)" : "") + ", began \(counterBegan), max fingers \(counterMaxFingers)"
+            + String(format: "\n    recognizer values: rotate actions %d, rotation max %.1f° last %.1f° | magnification max %.3f last %.3f | pan translation max %.0f pt",
+                     rotation, recRotationMax, recRotationLast, recMagnificationMax, recMagnificationLast, panTranslationMax)
     }
 
     static func name(_ raw: UInt) -> String {
@@ -32,6 +48,52 @@ struct TouchCounters {
         default: return "t\(raw)"
         }
     }
+}
+
+/// Passive NSGestureRecognizer subclass that only counts the NSTouches AppKit hands to gesture recognizers
+/// (macOS 27 / TN3212: the only path for direct touches). It never begins, so it does not block other
+/// recognizers; it fails once all fingers are lifted so it is reset for the next sequence.
+final class TouchCountingRecognizer: NSGestureRecognizer {
+    /// (touches by type in this callback, touches begun, fingers currently down)
+    var onTouches: ((_ direct: Int, _ indirect: Int, _ other: Int, _ began: Int, _ down: Int) -> Void)?
+    var onSequenceEnd: (() -> Void)?
+    private var active = Set<Int>()
+    private var lastWindowPoint: NSPoint?
+
+    /// Required for NSGestureRecognizer subclasses with the macOS 27 SDK (otherwise NSZeroPoint + logged error)
+    override func location(in view: NSView?) -> NSPoint {
+        guard let p = lastWindowPoint else { return .zero }
+        return view?.convert(p, from: nil) ?? p
+    }
+
+    private func handle(_ event: NSEvent) {
+        var direct = 0, indirect = 0, other = 0, began = 0
+        for t in event.touches(matching: .any, in: view) {
+            switch t.type {
+            case .direct: direct += 1; lastWindowPoint = t.location(in: nil)
+            case .indirect: indirect += 1
+            default: other += 1
+            }
+            let id = t.identity.hash
+            if t.phase.contains(.began) { began += 1; active.insert(id) }
+            if t.phase.contains(.ended) || t.phase.contains(.cancelled) { active.remove(id) }
+            else if !t.phase.contains(.began) { active.insert(id) }
+        }
+        let touching = event.touches(matching: .touching, in: view).count
+        onTouches?(direct, indirect, other, began, max(active.count, touching))
+        if active.isEmpty && touching == 0 { finish() }
+    }
+    private func finish() {
+        active.removeAll()
+        onSequenceEnd?()
+        if state == .possible { state = .failed }
+    }
+    override func touchesBegan(with event: NSEvent) { handle(event) }
+    override func touchesMoved(with event: NSEvent) { handle(event) }
+    override func touchesEnded(with event: NSEvent) { handle(event) }
+    override func touchesCancelled(with event: NSEvent) { handle(event); finish() }
+    override func mouseUp(with event: NSEvent) { if state == .possible { state = .failed } }
+    override func reset() { active.removeAll(); super.reset() }
 }
 
 /// View that accepts direct and indirect touches and counts everything it gets
@@ -85,6 +147,10 @@ final class TouchTestController: NSObject, NSWindowDelegate, NSGestureRecognizer
     var extraInfo: () -> [String] = { [] }
     var probeRunning = false { didSet { runButton?.isEnabled = !probeRunning; dirty = true } }
     private weak var runButton: NSButton?
+    /// Distinct touches seen by the recognizer delegate in the current touch sequence
+    private var delegateTouchIDs = Set<Int>()
+    private var lastDelegateTouch = Date.distantPast
+    private var cancellableInfo = "-"
 
     var isVisible: Bool { window?.isVisible ?? false }
 
@@ -122,14 +188,32 @@ final class TouchTestController: NSObject, NSWindowDelegate, NSGestureRecognizer
         let mag = NSMagnificationGestureRecognizer(target: self, action: #selector(magnified(_:)))
         let press = NSPressGestureRecognizer(target: self, action: #selector(pressed(_:)))
         let click = NSClickGestureRecognizer(target: self, action: #selector(clicked(_:)))
-        for g in [pan, mag, press, click] as [NSGestureRecognizer] {
+        let rot = NSRotationGestureRecognizer(target: self, action: #selector(rotated(_:)))
+        let counter = TouchCountingRecognizer(target: nil, action: nil)
+        counter.onTouches = { [weak self] d, i, o, b, down in
+            self?.bump {
+                $0.counterEvents += 1; $0.counterDirect += d; $0.counterIndirect += i; $0.counterOther += o
+                $0.counterBegan += b; $0.counterMaxFingers = max($0.counterMaxFingers, down)
+            }
+        }
+        counter.onSequenceEnd = { [weak self] in self?.delegateTouchIDs.removeAll() }
+        cancellableInfo = "not available (pre-macOS 27 AppKit)"
+        var cancellable = 0
+        for g in [pan, mag, press, click, rot, counter] as [NSGestureRecognizer] {
             g.delegate = self
             // Gesture recognizers reject .indirect (NSInternalInconsistencyException); allow direct only.
             if let err = tb_try({ g.allowedTouchTypes = [.direct] }) {
                 NSLog("TouchBridge: direct touches not allowed for %@: %@", "\(type(of: g))", err)
             }
+            // macOS 27: NSGestureRecognizer.isCancellableByScrollGesture (TN3212). Set dynamically so the app
+            // still builds with older SDKs and runs on macOS 12-26. The passive counter stays uncancellable.
+            if g !== counter, g.responds(to: NSSelectorFromString("setCancellableByScrollGesture:")),
+               tb_try({ g.setValue(true, forKey: "cancellableByScrollGesture") }) == nil {
+                cancellable += 1
+            }
             view.addGestureRecognizer(g)
         }
+        if cancellable > 0 { cancellableInfo = "set on \(cancellable) recognizers" }
 
         label.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
         label.isSelectable = true
@@ -224,19 +308,55 @@ final class TouchTestController: NSObject, NSWindowDelegate, NSGestureRecognizer
     }
 
     func gestureRecognizer(_ gestureRecognizer: NSGestureRecognizer, shouldReceive touch: NSTouch) -> Bool {
+        if Date().timeIntervalSince(lastDelegateTouch) > 1.5 { delegateTouchIDs.removeAll() }
+        lastDelegateTouch = Date()
+        delegateTouchIDs.insert(touch.identity.hash)
+        let name = TouchTestController.recognizerName(gestureRecognizer)
+        let typeName: String
+        switch touch.type {
+        case .direct: typeName = "direct"
+        case .indirect: typeName = "indirect"
+        default: typeName = "other"
+        }
+        let simultaneous = delegateTouchIDs.count
         bump {
             switch touch.type {
             case .direct: $0.recognizerDirect += 1
             case .indirect: $0.recognizerIndirect += 1
             default: $0.recognizerOther += 1
             }
+            $0.shouldReceiveByRecognizer["\(name)/\(typeName)", default: 0] += 1
+            $0.delegateMaxSimultaneous = max($0.delegateMaxSimultaneous, simultaneous)
         }
         return true
     }
+
+    static func recognizerName(_ g: NSGestureRecognizer) -> String {
+        switch g {
+        case is TouchCountingRecognizer: return "counter"
+        case is NSPanGestureRecognizer: return "pan"
+        case is NSMagnificationGestureRecognizer: return "magnify"
+        case is NSRotationGestureRecognizer: return "rotate"
+        case is NSPressGestureRecognizer: return "press"
+        case is NSClickGestureRecognizer: return "click"
+        default: return "\(type(of: g))"
+        }
+    }
     func gestureRecognizer(_ gestureRecognizer: NSGestureRecognizer, shouldRecognizeSimultaneouslyWith other: NSGestureRecognizer) -> Bool { true }
 
-    @objc private func panned(_ g: NSGestureRecognizer) { bump { $0.pan += 1 } }
-    @objc private func magnified(_ g: NSGestureRecognizer) { bump { $0.magnification += 1 } }
+    @objc private func panned(_ g: NSPanGestureRecognizer) {
+        let t = g.translation(in: view)
+        let d = Double(hypot(t.x, t.y))
+        bump { $0.pan += 1; $0.panTranslationMax = max($0.panTranslationMax, d) }
+    }
+    @objc private func magnified(_ g: NSMagnificationGestureRecognizer) {
+        let m = Double(g.magnification)
+        bump { $0.magnification += 1; $0.recMagnificationLast = m; if abs(m) > abs($0.recMagnificationMax) { $0.recMagnificationMax = m } }
+    }
+    @objc private func rotated(_ g: NSRotationGestureRecognizer) {
+        let r = Double(g.rotationInDegrees)
+        bump { $0.rotation += 1; $0.recRotationLast = r; if abs(r) > abs($0.recRotationMax) { $0.recRotationMax = r } }
+    }
     @objc private func pressed(_ g: NSGestureRecognizer) { bump { $0.press += 1 } }
     @objc private func clicked(_ g: NSGestureRecognizer) { bump { $0.click += 1 } }
 
@@ -270,6 +390,7 @@ final class TouchTestController: NSObject, NSWindowDelegate, NSGestureRecognizer
         var lines = [L("Phase: ", "Phase: ") + phase + (probeRunning ? L("  (experiment running – do not touch)", "  (Experiment läuft – nicht berühren)") : "")]
         for k in order { lines.append("[\(k)] " + (counters[k] ?? TouchCounters()).line) }
         lines.append("")
+        lines.append(contentsOf: setupInfo())
         lines.append(contentsOf: TouchTestController.screenInfo())
         lines.append(contentsOf: extraInfo())
         label.stringValue = lines.joined(separator: "\n")
@@ -279,10 +400,40 @@ final class TouchTestController: NSObject, NSWindowDelegate, NSGestureRecognizer
     func report(title: String) -> [String] {
         var out = ["=== \(title) – TouchBridge \(Updater.currentVersion) – \(Date())",
                    "macOS \(ProcessInfo.processInfo.operatingSystemVersionString)"]
+        out.append(contentsOf: setupInfo())
         for k in order { out.append("[\(k)] " + (counters[k] ?? TouchCounters()).line) }
         out.append(contentsOf: TouchTestController.screenInfo())
         out.append(contentsOf: extraInfo())
         return out
+    }
+
+    /// Build SDK (decides AppKit's linked-on-or-after behaviour), recognizer setup and whether anything covers the
+    /// touch area (TN3212: a covering view, even a transparent one, keeps recognizers from being gathered).
+    func setupInfo() -> [String] {
+        var hit = "-"
+        if let content = window?.contentView, window?.isVisible == true {
+            // hitTest(_:) takes the point in the superview's coordinate system
+            let inWindow = view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil)
+            let top = content.hitTest(content.superview?.convert(inWindow, from: nil) ?? inWindow)
+            hit = top === view ? "TouchTestView (nothing covers it)" : "covered by \(top.map { "\(type(of: $0))" } ?? "nothing (nil)")"
+        }
+        return [TouchTestController.buildInfo(),
+                "Recognizers: click, press, pan, magnify, rotate, touch counter (allowedTouchTypes = direct) | isCancellableByScrollGesture: \(cancellableInfo) | hit test at touch area centre: \(hit)"]
+    }
+
+    /// "Build: SDK macOS 27.0 (…)" – compile-time SDK, LC_BUILD_VERSION of the executable and DTSDKName/DTXcode from Info.plist
+    static func buildInfo() -> String {
+        func ver(_ v: UInt32) -> String {
+            let patch = v & 0xff
+            return "\(v >> 16).\((v >> 8) & 0xff)" + (patch > 0 ? ".\(patch)" : "")
+        }
+        let maxAllowed = Int(tb_sdk_compile_max_allowed()), minRequired = Int(tb_sdk_compile_min_required())
+        var minos: UInt32 = 0, sdk: UInt32 = 0
+        let lc = tb_main_build_version(&minos, &sdk) == 1 ? "binary sdk \(ver(sdk)), minos \(ver(minos))" : "binary build version unknown"
+        let info = Bundle.main.infoDictionary ?? [:]
+        let plist = ["DTSDKName", "DTXcode", "DTXcodeBuild", "LSMinimumSystemVersion"].compactMap { k in info[k].map { "\(k) \($0)" } }
+        return "Build: \(lc) | compile-time SDK \(maxAllowed / 10000).\((maxAllowed / 100) % 100) (__MAC_OS_X_VERSION_MAX_ALLOWED \(maxAllowed), min required \(minRequired))"
+            + (plist.isEmpty ? " | no DT* keys (not run from the app bundle)" : " | " + plist.joined(separator: ", "))
     }
 
     /// NSScreen touch capabilities – macOS 27 API (NSScreen.TouchCapabilities) probed dynamically, so it builds

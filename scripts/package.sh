@@ -27,6 +27,24 @@ num="$(echo "$ver" | grep -Eo '^[0-9]+(\.[0-9]+)*' || echo 0.0.0)"
 sed -e "s/__VERSION__/${num:-0.0.0}/" -e "s/__BUILD__/$build/" Resources/Info.plist > "$app/Contents/Info.plist"
 # vollständige Version (inkl. -preview…) für den In-App-Updater
 plutil -insert TouchBridgeVersion -string "$ver" "$app/Contents/Info.plist"
+# Build SDK / Xcode like Xcode-built bundles (DTSDKName etc.) – shown in the Touch Test report. macOS 27 AppKit
+# delivers direct touches to gesture recognizers only in apps linked against the macOS 27 SDK (TN3212).
+sdkver="$(xcrun --sdk macosx --show-sdk-version 2>/dev/null || true)"
+if [ -n "$sdkver" ]; then
+  plutil -insert DTSDKName -string "macosx$sdkver" "$app/Contents/Info.plist"
+  plutil -insert DTPlatformVersion -string "$sdkver" "$app/Contents/Info.plist"
+  sdkbuild="$(xcrun --sdk macosx --show-sdk-build-version 2>/dev/null || true)"
+  [ -n "$sdkbuild" ] && plutil -insert DTSDKBuild -string "$sdkbuild" "$app/Contents/Info.plist"
+fi
+if xv="$(xcodebuild -version 2>/dev/null)"; then
+  xver="$(echo "$xv" | awk '/^Xcode/{print $2}')"; xbuild="$(echo "$xv" | awk '/^Build version/{print $3}')"
+  IFS=. read -r xa xb xc <<< "$xver"
+  plutil -insert DTXcode -string "$(printf '%02d%d%d' "${xa:-0}" "${xb:-0}" "${xc:-0}")" "$app/Contents/Info.plist"
+  [ -n "$xbuild" ] && plutil -insert DTXcodeBuild -string "$xbuild" "$app/Contents/Info.plist"
+fi
+plutil -insert BuildMachineOSBuild -string "$(sw_vers -buildVersion)" "$app/Contents/Info.plist"
+echo "== build SDK: macosx${sdkver:-?}, Xcode ${xver:-?} (${xbuild:-?}); binary:"
+vtool -show-build "$app/Contents/MacOS/TouchBridgeApp" 2>/dev/null | grep -E 'architecture|minos|sdk' || otool -l "$app/Contents/MacOS/TouchBridgeApp" | grep -A4 LC_BUILD_VERSION | grep -E 'minos|sdk'
 plutil -lint "$app/Contents/Info.plist"
 # App-Icon (scripts/icon/make_icon.py) + Menüleisten-Glyph (Template, 18 pt @1x/@2x)
 cp Resources/AppIcon.icns Resources/MenuBarIcon.png Resources/MenuBarIcon@2x.png "$app/Contents/Resources/"

@@ -2,6 +2,11 @@ name: CI
 
 # Every push to main, every pull request and every manual run (Actions -> CI -> Run workflow):
 # macOS universal build (arm64 + x86_64), unit tests (XCTest, parallel) and the release package.
+# SDK: build-test and release run on the GitHub "xcode-27" image (macOS 27, Xcode 27, preview label) and select the
+# newest installed Xcode (scripts/ci-xcode.sh), so the app links against the macOS 27 SDK – macOS 27 AppKit delivers
+# direct touches to gesture recognizers only for apps built with that SDK (TN3212). Deployment target stays
+# macOS 12 (Package.swift, LSMinimumSystemVersion 12.0); new APIs are used dynamically / behind availability checks.
+# test-intel keeps the older macos-15-intel image (Xcode 16 / macOS 15 SDK) and so also proves older SDKs compile.
 #   build-test   swift build (universal, release) + swift test --parallel on Apple silicon; SwiftPM build
 #                cache via actions/cache; TouchBridge.app is packed into a DMG, mounted and verified
 #                (bundle layout, Info.plist, code signature, CLI inside the bundle); uploaded as artefact.
@@ -78,24 +83,23 @@ jobs:
     name: macOS universal build + tests
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    runs-on: macos-15
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v4
 
-      - name: Toolchain
+      - name: Toolchain (newest Xcode, macOS 27 SDK)
         run: |
           sw_vers
-          xcodebuild -version
-          swift --version
+          scripts/ci-xcode.sh 27
 
       - name: SwiftPM build cache
         uses: actions/cache@v4
         with:
           path: .build
-          key: spm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-${{ hashFiles('Sources/**', 'Tests/**') }}
+          key: spm-xcode27-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-${{ hashFiles('Sources/**', 'Tests/**') }}
           restore-keys: |
-            spm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-
-            spm-${{ runner.os }}-${{ runner.arch }}-
+            spm-xcode27-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-
+            spm-xcode27-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Build (release, arm64 + x86_64)
         run: |
@@ -152,6 +156,18 @@ jobs:
             echo "App-Icon OK"
             lipo -info "$app/Contents/MacOS/TouchBridgeApp"
             lipo "$app/Contents/MacOS/TouchBridgeApp" -verify_arch arm64 x86_64
+            # Built with the macOS 27 SDK, deployment target still macOS 12
+            test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$app/Contents/Info.plist")" = 12.0
+            plutil -p "$app/Contents/Info.plist" | grep -E 'DTSDKName|DTXcode|DTPlatformVersion|BuildMachineOSBuild'
+            sdkname="$(/usr/libexec/PlistBuddy -c 'Print :DTSDKName' "$app/Contents/Info.plist")"
+            sdkmajor="${sdkname#macosx}"; sdkmajor="${sdkmajor%%.*}"
+            test "$sdkmajor" -ge 27 || { echo "::error::app built with $sdkname, expected macOS 27 SDK or newer"; exit 1; }
+            for arch in arm64 x86_64; do
+              bv="$(otool -arch "$arch" -l "$app/Contents/MacOS/TouchBridgeApp" | grep -A5 LC_BUILD_VERSION)"
+              echo "$arch: $(echo "$bv" | awk '/minos|sdk/{printf "%s %s  ", $1, $2}')"
+              echo "$bv" | awk '/ minos /{print $2}' | grep -qx '12.0' || { echo "::error::$arch minos is not 12.0"; exit 1; }
+              s="$(echo "$bv" | awk '/ sdk /{print $2}')"; test "${s%%.*}" -ge 27 || { echo "::error::$arch linked against SDK $s"; exit 1; }
+            done
             codesign --verify --deep --strict --verbose=2 "$app"
             codesign -d -r- "$app"
             help="$("$app/Contents/MacOS/touchbridge" --help)"; echo "${help%%$'\n'*}"
@@ -199,6 +215,11 @@ jobs:
     runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
+      - name: Toolchain (image default, older SDK)
+        run: |
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+          swift --version
       - uses: actions/cache@v4
         with:
           path: .build
@@ -214,11 +235,13 @@ jobs:
     name: Attach release package
     needs: [build-test, test-intel]
     if: github.event_name == 'release'
-    runs-on: macos-15
+    runs-on: xcode-27
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+      - name: Toolchain (newest Xcode, macOS 27 SDK)
+        run: scripts/ci-xcode.sh 27
       - name: Signing identity (self-signed certificate from secrets)
         env:
           TB_SIGN_P12: ${{ secrets.TB_SIGN_P12 }}

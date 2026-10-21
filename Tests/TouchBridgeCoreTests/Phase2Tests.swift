@@ -241,6 +241,7 @@ final class FakeProbe: AccessibilityProbe {
     }
 }
 
+/// Fixed clock in the selection tests: the 5 ms budget must not depend on runner speed (cold start on CI took 2 s)
 final class SmartTargetTests: XCTestCase {
     let cfg = SmartTargetConfig(radius: 10)
 
@@ -284,7 +285,7 @@ final class SmartTargetTests: XCTestCase {
     func testTapOnButtonStaysWithOneProbe() {
         let probe = FakeProbe()
         probe.elements = [AXElementInfo(role: "AXButton", frame: CGRect(x: 90, y: 90, width: 20, height: 20))]
-        let r = SmartTarget.resolve(CGPoint(x: 95, y: 95), probe: probe, config: cfg)
+        let r = SmartTarget.resolve(CGPoint(x: 95, y: 95), probe: probe, config: cfg, clock: { 0 })
         XCTAssertEqual(r.point, CGPoint(x: 95, y: 95))
         XCTAssertFalse(r.snapped)
         XCTAssertEqual(probe.calls.count, 1)
@@ -293,7 +294,7 @@ final class SmartTargetTests: XCTestCase {
     func testTapNextToCheckboxSnapsToCentre() {
         let probe = FakeProbe()
         probe.elements = [AXElementInfo(role: "AXCheckBox", frame: CGRect(x: 104, y: 92, width: 16, height: 16))]
-        let r = SmartTarget.resolve(CGPoint(x: 100, y: 100), probe: probe, config: cfg)
+        let r = SmartTarget.resolve(CGPoint(x: 100, y: 100), probe: probe, config: cfg, clock: { 0 })
         XCTAssertEqual(r.point, CGPoint(x: 112, y: 100))
         XCTAssertEqual(r.role, "AXCheckBox")
         XCTAssertLessThanOrEqual(r.probes, 13)
@@ -305,7 +306,7 @@ final class SmartTargetTests: XCTestCase {
             AXElementInfo(role: "AXButton", frame: CGRect(x: 108, y: 90, width: 20, height: 20)),   // 8 pt right
             AXElementInfo(role: "AXLink", frame: CGRect(x: 80, y: 90, width: 16, height: 20)),      // 4 pt left
         ]
-        let r = SmartTarget.resolve(CGPoint(x: 100, y: 100), probe: probe, config: cfg)
+        let r = SmartTarget.resolve(CGPoint(x: 100, y: 100), probe: probe, config: cfg, clock: { 0 })
         XCTAssertEqual(r.role, "AXLink")
         XCTAssertEqual(r.point, CGPoint(x: 88, y: 100))
     }
@@ -313,7 +314,7 @@ final class SmartTargetTests: XCTestCase {
     func testNothingInRadiusKeepsTap() {
         let probe = FakeProbe()
         probe.elements = [AXElementInfo(role: "AXButton", frame: CGRect(x: 130, y: 90, width: 20, height: 20))]
-        let r = SmartTarget.resolve(CGPoint(x: 100, y: 100), probe: probe, config: cfg)
+        let r = SmartTarget.resolve(CGPoint(x: 100, y: 100), probe: probe, config: cfg, clock: { 0 })
         XCTAssertEqual(r.point, CGPoint(x: 100, y: 100))
         XCTAssertFalse(r.snapped)
         XCTAssertLessThanOrEqual(probe.calls.count, 1 + cfg.maxSamples)
@@ -325,7 +326,7 @@ final class SmartTargetTests: XCTestCase {
             AXElementInfo(role: "AXStaticText", frame: CGRect(x: 0, y: 95, width: 200, height: 10), ancestorRoles: ["AXCell"]),
             AXElementInfo(role: "AXButton", frame: CGRect(x: 0, y: 106, width: 200, height: 20)),
         ]
-        let r = SmartTarget.resolve(CGPoint(x: 100, y: 100), probe: probe, config: cfg)
+        let r = SmartTarget.resolve(CGPoint(x: 100, y: 100), probe: probe, config: cfg, clock: { 0 })
         XCTAssertFalse(r.snapped)
         XCTAssertEqual(probe.calls.count, 1)
     }
@@ -337,7 +338,7 @@ final class SmartTargetTests: XCTestCase {
             AXElementInfo(role: "AXStaticText", frame: CGRect(x: 93, y: 96, width: 60, height: 8)),
             AXElementInfo(role: "AXCheckBox", frame: CGRect(x: 78, y: 92, width: 14, height: 16)),
         ]
-        let r = SmartTarget.resolve(CGPoint(x: 100, y: 100), probe: probe, config: cfg)
+        let r = SmartTarget.resolve(CGPoint(x: 100, y: 100), probe: probe, config: cfg, clock: { 0 })
         XCTAssertEqual(r.role, "AXCheckBox")
         XCTAssertEqual(r.point, CGPoint(x: 85, y: 100))
         XCTAssertFalse(probe.calls.dropFirst().contains { CGRect(x: 93, y: 96, width: 60, height: 8).contains($0) })
@@ -353,7 +354,7 @@ final class SmartTargetTests: XCTestCase {
 
     func testNoElementKeepsTap() {
         final class Empty: AccessibilityProbe { func element(at point: CGPoint) -> AXElementInfo? { nil } }
-        let r = SmartTarget.resolve(CGPoint(x: 1, y: 2), probe: Empty(), config: cfg)
+        let r = SmartTarget.resolve(CGPoint(x: 1, y: 2), probe: Empty(), config: cfg, clock: { 0 })
         XCTAssertEqual(r, SmartTarget.Result(point: CGPoint(x: 1, y: 2), role: nil, probes: 1))
     }
 }

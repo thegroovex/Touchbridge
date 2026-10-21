@@ -11,10 +11,12 @@ cd "$(dirname "$0")/.."
 # Version: argument (CI: release tag without "v"), otherwise the VERSION file (current development version)
 ver="${1:-$(cat VERSION 2>/dev/null || echo dev)}"
 swift build -c release --arch arm64 --arch x86_64
-bindir="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)"
+# last line only: newer SwiftPM (Xcode 27, universal/XCBuild) may print a warning before the path
+bindir="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path | tail -n 1)"
+echo "bin path: $bindir"
 for b in TouchBridge TouchBridgeApp; do
   test -x "$bindir/$b"
-  lipo "$bindir/$b" -verify_arch arm64 x86_64
+  archs="$(lipo -archs "$bindir/$b")"; case " $archs " in *" arm64 "*) ;; *) echo "missing arm64: $archs"; exit 1;; esac; case " $archs " in *" x86_64 "*) ;; *) echo "missing x86_64: $archs"; exit 1;; esac
 done
 
 rm -rf dist && mkdir -p dist/stage

@@ -23,20 +23,30 @@ struct TouchCounters {
     var counterEvents = 0, counterDirect = 0, counterIndirect = 0, counterOther = 0, counterBegan = 0, counterMaxFingers = 0
 
     var line: String {
-        let types = eventTypes.sorted { $0.key < $1.key }.map { "\(TouchCounters.name($0.key))×\($0.value)" }.joined(separator: " ")
-        return "view touches direct \(viewDirect) / indirect \(viewIndirect)" + (viewOther > 0 ? " / other \(viewOther)" : "")
-            + " | recognizer touches direct \(recognizerDirect) / indirect \(recognizerIndirect)" + (recognizerOther > 0 ? " / other \(recognizerOther)" : "")
-            + " | gestures pan \(pan) magnify \(magnification) press \(press) click \(click)"
-            + " | mouse \(mouse) scroll \(scroll) magnifyEv \(magnifyEvents) rotateEv \(rotateEvents) swipeEv \(swipeEvents) smartMagnify \(smartMagnify)"
-            + " | NSEvent types: " + (types.isEmpty ? "-" : types)
-            + String(format: " | rotation sum %.1f° (zero-valued %d) magnification sum %.3f", rotationSum, rotationZero, magnificationSum)
-            + "\n    recognizer delegate shouldReceive: " + (shouldReceiveByRecognizer.isEmpty ? "-" :
-                shouldReceiveByRecognizer.sorted { $0.key < $1.key }.map { "\($0.key)×\($0.value)" }.joined(separator: " "))
-            + " | max simultaneous touches (delegate) \(delegateMaxSimultaneous)"
-            + "\n    touch counter recognizer: callbacks \(counterEvents), touches direct \(counterDirect) / indirect \(counterIndirect)"
-            + (counterOther > 0 ? " / other \(counterOther)" : "") + ", began \(counterBegan), max fingers \(counterMaxFingers)"
-            + String(format: "\n    recognizer values: rotate actions %d, rotation max %.1f° last %.1f° | magnification max %.3f last %.3f | pan translation max %.0f pt",
-                     rotation, recRotationMax, recRotationLast, recMagnificationMax, recMagnificationLast, panTranslationMax)
+        // Built from separate statements – one long "+" chain is too slow for the Swift 6.1 type checker.
+        let types: String = eventTypes.sorted { $0.key < $1.key }.map { "\(TouchCounters.name($0.key))×\($0.value)" }.joined(separator: " ")
+        let receives: String = shouldReceiveByRecognizer.sorted { $0.key < $1.key }.map { "\($0.key)×\($0.value)" }.joined(separator: " ")
+        var parts: [String] = []
+        var view = "view touches direct \(viewDirect) / indirect \(viewIndirect)"
+        if viewOther > 0 { view += " / other \(viewOther)" }
+        parts.append(view)
+        var rec = "recognizer touches direct \(recognizerDirect) / indirect \(recognizerIndirect)"
+        if recognizerOther > 0 { rec += " / other \(recognizerOther)" }
+        parts.append(rec)
+        parts.append("gestures pan \(pan) magnify \(magnification) rotate \(rotation) press \(press) click \(click)")
+        parts.append("mouse \(mouse) scroll \(scroll) magnifyEv \(magnifyEvents) rotateEv \(rotateEvents) swipeEv \(swipeEvents) smartMagnify \(smartMagnify)")
+        parts.append("NSEvent types: " + (types.isEmpty ? "-" : types))
+        parts.append(String(format: "rotation sum %.1f° (zero-valued %d) magnification sum %.3f", rotationSum, rotationZero, magnificationSum))
+        var out: String = parts.joined(separator: " | ")
+        out += "\n    recognizer delegate shouldReceive: " + (receives.isEmpty ? "-" : receives)
+        out += " | max simultaneous touches (delegate) \(delegateMaxSimultaneous)"
+        var counter = "\n    touch counter recognizer: callbacks \(counterEvents), touches direct \(counterDirect) / indirect \(counterIndirect)"
+        if counterOther > 0 { counter += " / other \(counterOther)" }
+        counter += ", began \(counterBegan), max fingers \(counterMaxFingers)"
+        out += counter
+        out += String(format: "\n    recognizer values: rotation max %.1f° last %.1f° | magnification max %.3f last %.3f | pan translation max %.0f pt",
+                      recRotationMax, recRotationLast, recMagnificationMax, recMagnificationLast, panTranslationMax)
+        return out
     }
 
     static func name(_ raw: UInt) -> String {

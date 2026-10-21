@@ -12,6 +12,16 @@ enum SettingsStore {
     static func save(_ s: TouchSettings) {
         if let d = try? JSONEncoder().encode(s) { UserDefaults.standard.set(d, forKey: key) }
     }
+    private static let profilesKey = "appProfiles"
+    /// App profiles + menu selection
+    static func loadProfiles() -> ProfileStore {
+        guard let d = UserDefaults.standard.data(forKey: profilesKey),
+              let s = try? JSONDecoder().decode(ProfileStore.self, from: d) else { return ProfileStore() }
+        return s
+    }
+    static func saveProfiles(_ s: ProfileStore) {
+        if let d = try? JSONEncoder().encode(s) { UserDefaults.standard.set(d, forKey: profilesKey) }
+    }
     /// Automatisch beim Start und alle 24 h nach Updates suchen
     static var autoUpdateCheck: Bool {
         get { UserDefaults.standard.object(forKey: "autoUpdateCheck") as? Bool ?? true }

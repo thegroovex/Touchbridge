@@ -143,6 +143,13 @@ defaults*), *Touch* (Smart target on/off and search radius, touch context menu o
 touch context menu need the Accessibility permission. Mission Control, App Exposé and Spaces use
 the system shortcuts Ctrl ↑ / Ctrl ↓ / Ctrl ← → and Show desktop uses F11 – keep them enabled in System Settings › Keyboard › Keyboard Shortcuts.
 
+**App profiles** (Settings › *Profiles*): give an app its own gestures and settings (pinch zoom, scroll direction and speed,
+1-finger scroll, momentum, smart target, touch context menu, hold time – each either *Default* or its own value). Add a profile
+with **+** (a running app or an .app file), duplicate or delete it, and edit it with the same gesture editor. TouchBridge switches
+automatically when that app comes to the front; every other app uses the *Default* profile (the normal settings). Menu ›
+**Profile** chooses *Automatic*, *Default* or a fixed profile (manual profiles without an app live there too). *Export …* /
+*Import …* save and load profiles as a versioned JSON file; importing replaces the profile of the same app and adds the rest.
+
 ## MIDI mode
 
 Menu › **Mode › MIDI** turns the screen into a MIDI controller. TouchBridge creates a virtual MIDI port

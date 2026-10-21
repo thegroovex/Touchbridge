@@ -11,16 +11,28 @@ final class SettingsModel: ObservableObject {
     }
     @Published var language: AppLanguage = L10n.language
     @Published var accessibilityTrusted = Permissions.accessibility
+    /// App profiles (0.4 phase 3)
+    @Published var profiles: ProfileStore {
+        didSet { if profiles != oldValue { applyProfiles(profiles) } }
+    }
+    /// Profile currently in effect (nil = default) and the app driving it
+    @Published var activeProfileID: UUID?
+    @Published var frontmostBundleID: String?
+    @Published var tab: SettingsTab = .general
     let apply: (TouchSettings) -> Void
     let onLanguage: (AppLanguage) -> Void
     let openAccessibility: () -> Void
+    let applyProfiles: (ProfileStore) -> Void
 
     init(settings: TouchSettings, apply: @escaping (TouchSettings) -> Void,
-         onLanguage: @escaping (AppLanguage) -> Void, openAccessibility: @escaping () -> Void) {
+         onLanguage: @escaping (AppLanguage) -> Void, openAccessibility: @escaping () -> Void,
+         profiles: ProfileStore, applyProfiles: @escaping (ProfileStore) -> Void) {
         self.settings = settings
         self.apply = apply
         self.onLanguage = onLanguage
         self.openAccessibility = openAccessibility
+        self.profiles = profiles
+        self.applyProfiles = applyProfiles
     }
 
     func setLanguage(_ l: AppLanguage) {
@@ -47,7 +59,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             w.styleMask = [.titled, .closable, .miniaturizable]
             w.isReleasedWhenClosed = false
             w.delegate = self
-            w.setContentSize(NSSize(width: 640, height: 560))
+            w.setContentSize(NSSize(width: 840, height: 600))
             w.center()
             window = w
         }
@@ -60,6 +72,18 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         if model.settings != s { model.settings = s }
     }
 
+    /// Profiles changed elsewhere (menu)
+    func syncProfiles(_ p: ProfileStore) {
+        if model.profiles != p { model.profiles = p }
+    }
+
+    func activeProfileChanged(_ id: UUID?, frontmost: String?) {
+        if model.activeProfileID != id { model.activeProfileID = id }
+        if model.frontmostBundleID != frontmost { model.frontmostBundleID = frontmost }
+    }
+
+    func showTab(_ t: SettingsTab) { model.tab = t }
+
     func languageChanged() {
         model.language = L10n.language
         window?.title = L("TouchBridge Settings", "TouchBridge-Einstellungen")
@@ -68,27 +92,36 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
 // MARK: - Views
 
+enum SettingsTab: Hashable { case general, gestures, profiles, touch, about }
+
 struct SettingsView: View {
     @ObservedObject var model: SettingsModel
 
     var body: some View {
-        TabView {
+        TabView(selection: $model.tab) {
             GeneralTab(model: model)
                 .tabItem { Text(L("General", "Allgemein")) }
+                .tag(SettingsTab.general)
             GesturesTab(model: model)
                 .tabItem { Text(L("Gestures", "Gesten")) }
+                .tag(SettingsTab.gestures)
+            ProfilesTab(model: model)
+                .tabItem { Text(L("Profiles", "Profile")) }
+                .tag(SettingsTab.profiles)
             TouchTab(model: model)
                 .tabItem { Text("Touch") }
+                .tag(SettingsTab.touch)
             AboutTab()
                 .tabItem { Text(L("About", "Über")) }
+                .tag(SettingsTab.about)
         }
         .padding(16)
-        .frame(width: 640, height: 560)
+        .frame(width: 840, height: 600)
         .id(model.language)   // rebuild all L() strings after a language switch
     }
 }
 
-private struct SectionBox<Content: View>: View {
+struct SectionBox<Content: View>: View {
     let title: String
     @ViewBuilder let content: () -> Content
     var body: some View {
@@ -100,7 +133,7 @@ private struct SectionBox<Content: View>: View {
     }
 }
 
-private struct Hint: View {
+struct Hint: View {
     let text: String
     init(_ t: String) { text = t }
     var body: some View {
@@ -144,21 +177,31 @@ struct GesturesTab: View {
             Hint(L("Tap = click, 1-finger drag = drag, 2-finger drag = scroll and pinch = zoom are fixed. Choose what the other gestures do:",
                    "Tippen = Klick, 1-Finger-Ziehen = Ziehen, 2-Finger-Ziehen = Scrollen und Pinch = Zoomen sind fest. Wähle, was die übrigen Gesten tun:"))
             ScrollView {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(GestureTrigger.allCases, id: \.self) { t in
-                        GestureRow(trigger: t, action: Binding(get: { model.settings.gestures[t] },
-                                                               set: { model.settings.gestures[t] = $0 }))
-                        Divider()
-                    }
-                }
-                .padding(.trailing, 8)
+                GestureList(map: $model.settings.gestures)
             }
             HStack {
+                Hint(L("These are the gestures of the default profile. App profiles: Profiles tab.",
+                       "Das sind die Gesten des Standardprofils. App-Profile: Reiter „Profile“."))
                 Spacer()
                 Button(L("Reset to defaults", "Auf Standard zurücksetzen")) { model.settings.gestures = GestureMap.defaults }
                     .disabled(model.settings.gestures.isDefault)
             }
         }
+    }
+}
+
+/// The gesture editor: one row per slot (used by the Gestures tab and the profile editor)
+struct GestureList: View {
+    @Binding var map: GestureMap
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(GestureTrigger.allCases, id: \.self) { t in
+                GestureRow(trigger: t, action: Binding(get: { map[t] }, set: { map[t] = $0 }))
+                Divider()
+            }
+        }
+        .padding(.trailing, 8)
     }
 }
 

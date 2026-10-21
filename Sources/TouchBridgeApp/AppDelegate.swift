@@ -9,7 +9,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let menu = NSMenu()
     private var service: TouchService!
     private var settings = SettingsStore.load() {
-        didSet { SettingsStore.save(settings); service.settings = settings; refreshControl(); updateOverlay(); updateIcon(); settingsWindow?.sync(settings) }
+        didSet { SettingsStore.save(settings); applyEffective(); refreshControl(); updateOverlay(); updateIcon(); settingsWindow?.sync(settings) }
+    }
+    /// App profiles (0.4 phase 3); global `settings` = default profile
+    private var profiles = SettingsStore.loadProfiles() {
+        didSet {
+            guard profiles != oldValue else { return }
+            SettingsStore.saveProfiles(profiles)
+            applyEffective()
+            settingsWindow?.syncProfiles(profiles)
+        }
+    }
+    /// Bundle ID of the frontmost app (other than TouchBridge itself)
+    private var frontmostBundleID: String? = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+    /// Name of the profile last applied (for the log)
+    private var lastProfileID: UUID??
+    /// Global settings with the active profile applied – what the touch service and interaction use
+    private var effectiveSettings: TouchSettings {
+        profiles.effective(settings, frontmostBundleID: frontmostBundleID)
     }
     /// Settings window (created on first use)
     private var settingsWindow: SettingsWindowController?
@@ -46,15 +63,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.autoenablesItems = false
         statusItem.menu = menu
 
-        service = TouchService(settings: settings)
+        if frontmostBundleID == Bundle.main.bundleIdentifier { frontmostBundleID = nil }
+        service = TouchService(settings: effectiveSettings)
         service.log = { [weak self] line in self?.appendLog(line) }
         service.onStatus = { [weak self] _ in self?.updateIcon() }
         service.onMIDIUpdate = { [weak self] in self?.refreshOverlayContent() }
-        let ti = TouchInteraction(settings: { [weak self] in self?.settings ?? TouchSettings() },
+        let ti = TouchInteraction(settings: { [weak self] in self?.effectiveSettings ?? TouchSettings() },
                                   log: { [weak self] line in self?.appendLog(line) })
         interaction = ti
         service.gestureDelegate = ti
         installMainMenu()
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(appActivated(_:)),
+                                                          name: NSWorkspace.didActivateApplicationNotification, object: nil)
+        logActiveProfile()
 
         // Dialoge nur EINMAL (gemerkt); danach nur Hinweis im Menü – kein Prompt bei jedem Start
         Permissions.requestAccessibilityOnce()
@@ -459,6 +480,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(toggle(L("Momentum scrolling", "Scrollen mit Nachlauf (Momentum)"), settings.momentumScroll, #selector(toggleMomentum)))
         menu.addItem(toggle(L("Hide pointer while touching", "Zeiger beim Berühren ausblenden"), settings.hidePointer, #selector(toggleHidePointer)))
         menu.addItem(submenu(L("Gestures", "Gesten"), gesturesMenu()))
+        menu.addItem(submenu(profileMenuTitle, profilesMenu()))
         menu.addItem(toggle(L("Exclusive access (recommended)", "Exklusiv übernehmen (empfohlen)"), settings.seize, #selector(toggleSeize)))
         let touchOnly = toggle(L("Exclusive touch interface only (test: mouse/vendor not exclusive)", "Exklusiv nur Touch-Schnittstelle (Test: Maus/Vendor nicht exklusiv)"), settings.seizeTouchOnly,
                                #selector(toggleSeizeTouchOnly))
@@ -581,11 +603,86 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         line(L("2-finger pinch → Zoom", "2-Finger-Pinch → Zoomen"))
         m.addItem(.separator())
         for t in GestureTrigger.allCases {
-            line("\(t.title) → \(settings.gestures[t].title)")
+            line("\(t.title) → \(effectiveSettings.gestures[t].title)")
         }
         m.addItem(.separator())
         m.addItem(action(L("Edit gestures …", "Gesten bearbeiten …"), #selector(openSettings)))
         return m
+    }
+
+    // MARK: - Profiles
+
+    private var activeProfile: AppProfile? { profiles.active(frontmostBundleID: frontmostBundleID) }
+
+    /// "Profile: Automatic (Ableton Live)" / "Profile: Default" / "Profile: <name>"
+    private var profileMenuTitle: String {
+        let current = activeProfile?.name ?? L("Default", "Standard")
+        switch profiles.selection {
+        case .automatic: return L("Profile: Automatic (\(current))", "Profil: Automatisch (\(current))")
+        case .defaultProfile, .profile: return L("Profile: ", "Profil: ") + current
+        }
+    }
+
+    private func profilesMenu() -> NSMenu {
+        let m = NSMenu()
+        m.autoenablesItems = false
+        m.addItem(toggle(L("Automatic (by frontmost app)", "Automatisch (nach aktiver App)"), profiles.selection == .automatic, #selector(selectProfile(_:)), tag: -1))
+        m.addItem(toggle(L("Default", "Standard"), profiles.selection == .defaultProfile, #selector(selectProfile(_:)), tag: -2))
+        if !profiles.profiles.isEmpty { m.addItem(.separator()) }
+        for (i, p) in profiles.profiles.enumerated() {
+            let item = toggle(p.name, profiles.selection == .profile(p.id), #selector(selectProfile(_:)), tag: i)
+            if profiles.selection == .automatic, activeProfile?.id == p.id { item.state = .mixed }
+            if p.isManual { item.toolTip = L("Manual profile (no app)", "Manuelles Profil (ohne App)") }
+            else if let b = p.bundleID { item.toolTip = b }
+            m.addItem(item)
+        }
+        if activeProfile != nil {
+            m.addItem(.separator())
+            m.addItem(warning(L("The menu shows and changes the default settings; the profile overrides gestures and some of them.",
+                                "Das Menü zeigt und ändert die Standardeinstellungen; das Profil überschreibt Gesten und einige davon."), color: .secondaryLabelColor))
+        }
+        m.addItem(.separator())
+        m.addItem(action(L("Edit profiles …", "Profile bearbeiten …"), #selector(openProfiles)))
+        return m
+    }
+
+    @objc private func selectProfile(_ s: NSMenuItem) {
+        switch s.tag {
+        case -1: profiles.selection = .automatic
+        case -2: profiles.selection = .defaultProfile
+        default:
+            guard profiles.profiles.indices.contains(s.tag) else { return }
+            profiles.selection = .profile(profiles.profiles[s.tag].id)
+        }
+    }
+
+    @objc private func appActivated(_ n: Notification) {
+        let app = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+        let next = FrontmostApp.next(current: frontmostBundleID, activated: app?.bundleIdentifier, own: Bundle.main.bundleIdentifier)
+        guard next != frontmostBundleID else { return }
+        frontmostBundleID = next
+        applyEffective()
+    }
+
+    /// Pushes the effective settings (global + active profile) to the touch service.
+    private func applyEffective() {
+        guard service != nil else { return }
+        let e = effectiveSettings
+        if service.settings != e { service.settings = e }
+        logActiveProfile()
+        settingsWindow?.activeProfileChanged(activeProfile?.id, frontmost: frontmostBundleID)
+    }
+
+    private func logActiveProfile() {
+        let id = activeProfile?.id
+        if let last = lastProfileID, last == id { return }
+        lastProfileID = .some(id)
+        appendLog("👤 Profile: \(activeProfile?.name ?? "Default")" + (frontmostBundleID.map { " (frontmost: \($0))" } ?? ""))
+    }
+
+    @objc private func openProfiles() {
+        openSettings()
+        settingsWindow?.showTab(.profiles)
     }
 
     private func scrollMenu() -> NSMenu {
@@ -758,7 +855,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                           self.settings = s
                                       },
                                       onLanguage: { [weak self] _ in self?.updateIcon(); self?.settingsWindow?.languageChanged() },
-                                      openAccessibility: { [weak self] in self?.openAccessibility() })
+                                      openAccessibility: { [weak self] in self?.openAccessibility() },
+                                      profiles: profiles,
+                                      applyProfiles: { [weak self] p in
+                                          guard let self = self, self.profiles != p else { return }
+                                          self.profiles = p
+                                      })
+            model.activeProfileID = activeProfile?.id
+            model.frontmostBundleID = frontmostBundleID
             settingsWindow = SettingsWindowController(model: model)
         }
         settingsWindow?.show()

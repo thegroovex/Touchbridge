@@ -129,6 +129,9 @@ public struct TouchSettings: Codable, Equatable {
     public var effectiveSeize: Bool { seize || mode == .midi }
 }
 
+/// App profiles override the gesture map and these settings (see ProfileStore).
+extension TouchSettings: ProfileTunable {}
+
 public enum Permissions {
     public static var accessibility: Bool { AXIsProcessTrusted() }
     /// Zeigt den Dialog für Gerätesteuerung und Datenzugriff (früher Bedienungshilfen, „… möchte diesen Mac steuern“), falls nicht erteilt.

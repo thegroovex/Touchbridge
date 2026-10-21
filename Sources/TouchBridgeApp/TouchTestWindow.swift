@@ -10,6 +10,8 @@ struct TouchCounters {
     var pan = 0, magnification = 0, press = 0, click = 0
     var mouse = 0, scroll = 0, magnifyEvents = 0, rotateEvents = 0, swipeEvents = 0, smartMagnify = 0
     var eventTypes: [UInt: Int] = [:]
+    /// Sums of NSEvent.rotation (degrees) and .magnification seen by the event monitor
+    var rotationSum = 0.0, magnificationSum = 0.0, rotationZero = 0
 
     var line: String {
         let types = eventTypes.sorted { $0.key < $1.key }.map { "\(TouchCounters.name($0.key))×\($0.value)" }.joined(separator: " ")
@@ -18,6 +20,7 @@ struct TouchCounters {
             + " | gestures pan \(pan) magnify \(magnification) press \(press) click \(click)"
             + " | mouse \(mouse) scroll \(scroll) magnifyEv \(magnifyEvents) rotateEv \(rotateEvents) swipeEv \(swipeEvents) smartMagnify \(smartMagnify)"
             + " | NSEvent types: " + (types.isEmpty ? "-" : types)
+            + String(format: " | rotation sum %.1f° (zero-valued %d) magnification sum %.3f", rotationSum, rotationZero, magnificationSum)
     }
 
     static func name(_ raw: UInt) -> String {
@@ -168,7 +171,11 @@ final class TouchTestController: NSObject, NSWindowDelegate, NSGestureRecognizer
         if monitor == nil {
             monitor = NSEvent.addLocalMonitorForEvents(matching: .any) { [weak self] e in
                 if let self = self, e.window === self.window {
-                    self.bump { $0.eventTypes[e.type.rawValue, default: 0] += 1 }
+                    self.bump {
+                        $0.eventTypes[e.type.rawValue, default: 0] += 1
+                        if e.type == .rotate { $0.rotationSum += Double(e.rotation); if e.rotation == 0 { $0.rotationZero += 1 } }
+                        if e.type == .magnify { $0.magnificationSum += Double(e.magnification) }
+                    }
                 }
                 return e
             }
@@ -245,6 +252,7 @@ final class TouchTestController: NSObject, NSWindowDelegate, NSGestureRecognizer
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text.joined(separator: "\n"), forType: .string)
         let err = RealTouchProbe.append(text)
+        resetCounters()
         let a = NSAlert()
         if let err = err {
             a.messageText = L("Could not save the file", "Datei konnte nicht gesichert werden")

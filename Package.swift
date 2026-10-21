@@ -19,7 +19,7 @@ let package = Package(
         .target(
             name: "TouchBridgeUSB",
             path: "Sources/TouchBridgeUSB",
-            linkerSettings: [.linkedFramework("IOKit"), .linkedFramework("CoreFoundation")]
+            linkerSettings: [.linkedFramework("IOKit"), .linkedFramework("CoreFoundation"), .linkedFramework("Foundation")]
         ),
         // macOS-Anbindung: IOKit-HID-Dienst, Bildschirme, Bildsteuerung (DDC / Gamma), CoreMIDI-Port, Rechte
         .target(
@@ -44,7 +44,7 @@ let package = Package(
         // Menüleisten-App (TouchBridge.app)
         .executableTarget(
             name: "TouchBridgeApp",
-            dependencies: ["TouchBridgeKit"],
+            dependencies: ["TouchBridgeKit", "TouchBridgeUSB"],
             path: "Sources/TouchBridgeApp",
             linkerSettings: [.linkedFramework("AppKit"), .linkedFramework("ServiceManagement")]
         ),

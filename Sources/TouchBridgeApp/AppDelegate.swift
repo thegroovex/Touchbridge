@@ -1,4 +1,5 @@
 import AppKit
+import TouchBridgeUSB
 import ServiceManagement
 import TouchBridgeCore
 import TouchBridgeKit
@@ -908,8 +909,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Run after the status menu has finished tracking – showing windows from inside the menu action can silently fail
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.prepareTouchTest()
-            self.touchTest.show(on: self.service.targetDisplay)
+            if let err = tb_try({
+                self.prepareTouchTest()
+                self.touchTest.show(on: self.service.targetDisplay)
+            }) {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(err, forType: .string)
+                self.alert(L("Touch Test window failed", "Touch-Testfenster fehlgeschlagen"),
+                           L("The error was copied to the clipboard – please paste it into the chat.\n\n", "Der Fehler ist in der Zwischenablage – bitte in den Chat einfügen.\n\n") + err)
+            }
         }
     }
 

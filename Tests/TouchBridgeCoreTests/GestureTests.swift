@@ -57,6 +57,12 @@ final class GestureTests: XCTestCase {
         engine.update(pts.map { CGPoint(x: $0.0, y: $0.1) })
     }
 
+    /// Keeps the finger still for `seconds` with the engine's regular 50 ms tick
+    private func hold(_ seconds: Double) {
+        let steps = Int((seconds / 0.05).rounded())
+        for _ in 0..<steps { now += 0.05; engine.tick() }
+    }
+
     func testTapClicks() {
         frame([(100, 100)])
         frame([(101, 100)])
@@ -81,8 +87,7 @@ final class GestureTests: XCTestCase {
 
     func testLongPressRightClicks() {
         frame([(50, 60)])
-        now += 0.7
-        engine.tick()
+        hold(0.7)
         frame([])
         XCTAssertEqual(sink.events, ["move 50,60", "rclick 50,60"])
     }
@@ -406,8 +411,7 @@ final class GestureTests: XCTestCase {
         let spy = LongPressSpy()
         engine.delegate = spy
         frame([(50, 60)])
-        now += 0.55
-        engine.tick()
+        hold(0.55)
         frame([])
         XCTAssertEqual(spy.points, [CGPoint(x: 50, y: 60)])
         XCTAssertEqual(sink.events, ["move 50,60"])
@@ -418,8 +422,7 @@ final class GestureTests: XCTestCase {
         spy.handled = false
         engine.delegate = spy
         frame([(50, 60)])
-        now += 0.55
-        engine.tick()
+        hold(0.55)
         XCTAssertEqual(spy.points.count, 1)
         XCTAssertEqual(sink.events.last, "rclick 50,60")
     }

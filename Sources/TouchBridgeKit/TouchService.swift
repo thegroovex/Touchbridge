@@ -320,7 +320,54 @@ public final class TouchService {
             guard releaseBluetoothDigitizer != oldValue else { return }
             log(releaseBluetoothDigitizer ? "📶 Bluetooth digitizer released to macOS (TouchBridge ignores it)"
                                           : "📶 Bluetooth digitizer handled by TouchBridge again")
+            btReacquireToken += 1
             if running { stop(); start() }
+            if running && !releaseBluetoothDigitizer {
+                let token = btReacquireToken
+                DispatchQueue.main.asyncAfter(deadline: .now() + TouchService.btReacquireDelays[0]) { [weak self] in
+                    self?.reacquireBluetooth(attempt: 0, token: token)
+                }
+            }
+        }
+    }
+    private var btReacquireToken = 0
+    /// Backoff for taking the Bluetooth digitizer back after "leave to macOS" (seconds after the restart)
+    static let btReacquireDelays: [Double] = [0.3, 0.7, 1.5, 3, 5]
+
+    /// After "leave to macOS" is switched off: make sure the Bluetooth digitizer is open, observed and scheduled
+    /// again. macOS may still hold the device for a moment, or the HID service is re-published shortly after the
+    /// close; so re-enumerate and retry the open with backoff instead of relying on a single attach.
+    private func reacquireBluetooth(attempt: Int, token: Int) {
+        guard running, !releaseBluetoothDigitizer, token == btReacquireToken else { return }
+        let open = devices.filter { $0.isBluetooth && $0.isTouch }
+        if !open.isEmpty {
+            for d in open { HIDInputHub.shared.ensureScheduled(d.device) }
+            note("📶 Bluetooth digitizer reacquired (attempt \(attempt + 1)): "
+                 + open.map { "\($0.label) " + ($0.exclusive ? "exclusive" : "non-exclusive") }.joined(separator: ", "))
+            return
+        }
+        // Not open yet: forget cached objects of Bluetooth devices and re-enumerate
+        if let m = manager, let set = IOHIDManagerCopyDevices(m) as? Set<IOHIDDevice> {
+            let bt = set.filter { TouchService.isBluetooth($0) }
+            if bt.isEmpty {
+                note("📶 Bluetooth digitizer: not enumerated yet (attempt \(attempt + 1))")
+            }
+            for dev in bt {
+                pending.removeAll { HIDOpenRegistry.registryID($0) == HIDOpenRegistry.registryID(dev) }
+                attach(dev, quiet: false)
+            }
+        }
+        if devices.contains(where: { $0.isBluetooth && $0.isTouch }) {
+            reacquireBluetooth(attempt: attempt, token: token)   // logs the result
+            return
+        }
+        guard attempt + 1 < TouchService.btReacquireDelays.count else {
+            note("⚠️  Bluetooth digitizer could not be reopened after \(attempt + 1) attempts – still retrying every 2 s in the background")
+            return
+        }
+        let delay = TouchService.btReacquireDelays[attempt + 1] - TouchService.btReacquireDelays[attempt]
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.reacquireBluetooth(attempt: attempt + 1, token: token)
         }
     }
     private static func isBluetooth(_ d: IOHIDDevice) -> Bool {
@@ -632,6 +679,8 @@ public final class TouchService {
     private func retryDevices() {
         guard running else { return }
         pruneStale()
+        // A released IOHIDManager (diagnostics, earlier stop()) unschedules the devices it enumerated; keep ours scheduled
+        for d in devices { HIDInputHub.shared.ensureScheduled(d.device) }
         for dev in pending { attach(dev, quiet: true) }
         if settings.effectiveSeize {
             for d in devices where !d.exclusive && !d.hadContacts && wantsSeize(d) {   // nie mitten in einer Berührung

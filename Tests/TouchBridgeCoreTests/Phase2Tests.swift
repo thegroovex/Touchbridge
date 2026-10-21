@@ -140,6 +140,12 @@ final class RemappedSlotTests: XCTestCase {
         engine.update(pts.map { CGPoint(x: $0.0, y: $0.1) })
     }
 
+    /// Keeps the finger still for `seconds` with the engine's regular 50 ms tick
+    private func hold(_ seconds: Double) {
+        let steps = Int((seconds / 0.05).rounded())
+        for _ in 0..<steps { now += 0.05; engine.tick() }
+    }
+
     private func rotated(_ deg: CGFloat) -> [(CGFloat, CGFloat)] {
         let a = deg * .pi / 180
         return [(150 - 50 * cos(a), 100 - 50 * sin(a)), (150 + 50 * cos(a), 100 + 50 * sin(a))]
@@ -174,8 +180,7 @@ final class RemappedSlotTests: XCTestCase {
         let spy = TapTargetSpy()
         engine.delegate = spy
         frame([(50, 60)])
-        now += 0.55
-        engine.tick()
+        hold(0.55)
         frame([])
         XCTAssertEqual(spy.longPresses, 0)
         XCTAssertEqual(sink.events, ["move 50,60", "key cmd+9"])
@@ -184,8 +189,7 @@ final class RemappedSlotTests: XCTestCase {
     func testLongPressNoneSwallowsTap() {
         make { $0.gestures[.longPress] = GestureAction.none }
         frame([(50, 60)])
-        now += 0.55
-        engine.tick()
+        hold(0.55)
         frame([])
         XCTAssertEqual(sink.events, ["move 50,60"])
     }
@@ -193,11 +197,9 @@ final class RemappedSlotTests: XCTestCase {
     func testLongPressDurationFromConfig() {
         make { $0.longPress = 1.0 }
         frame([(50, 60)])
-        now += 0.6
-        engine.tick()
+        hold(0.6)
         XCTAssertEqual(sink.events, ["move 50,60"])
-        now += 0.5
-        engine.tick()
+        hold(0.5)
         XCTAssertEqual(sink.events.last, "rclick 50,60")
     }
 

@@ -5,20 +5,34 @@ import TouchBridgeCore
 
 /// Accessibility hit test (AXUIElementCopyElementAtPosition) for smart target and the touch context menu.
 /// Coordinates: global display space, origin top left of the main display (same as CGEvent).
+///
+/// Threading: AX calls are synchronous IPC to the target app and can block for the whole messaging timeout
+/// (e.g. while the app tracks a context menu it does not answer). Use instances only from one dedicated serial
+/// queue, never from the main thread or the touch engine.
+///
+/// Timeouts: a timeout set on the system-wide element is process-global (it applies to every element without its
+/// own timeout), so several testers would overwrite each other. Each tester therefore sets the global value right
+/// before its own hit test (safe because all testers share one serial queue) and sets its timeout on every element
+/// it hands out, so later calls on that element (actions, attributes, AXShowMenu) use the per-element timeout.
 public final class AXHitTester: AccessibilityProbe {
     private let system = AXUIElementCreateSystemWide()
     /// How many ancestors are checked when the element itself is not a control (text inside a button …)
     public var ancestorLevels = 2
+    /// Per AX message (seconds)
+    public let timeout: Float
 
-    /// timeout: per AX message (seconds); keeps a hanging app from blocking the touch thread
+    /// timeout: per AX message (seconds); keeps a hanging app from blocking the caller for long
     public init(timeout: Float = 0.05) {
-        AXUIElementSetMessagingTimeout(system, timeout)
+        self.timeout = timeout
     }
 
     public func elementRef(at p: CGPoint) -> AXUIElement? {
+        AXUIElementSetMessagingTimeout(system, timeout)
         var el: AXUIElement?
         let rc = AXUIElementCopyElementAtPosition(system, Float(p.x), Float(p.y), &el)
-        return rc == .success ? el : nil
+        guard rc == .success, let e = el else { return nil }
+        AXUIElementSetMessagingTimeout(e, timeout)
+        return e
     }
 
     public func element(at p: CGPoint) -> AXElementInfo? {
@@ -51,9 +65,12 @@ public final class AXHitTester: AccessibilityProbe {
         return a
     }
 
+    /// Performs an AX action with a per-element timeout (default: this tester's timeout). Apps that track a
+    /// menu inside the action handler answer only when it closes – the call then returns .cannotComplete.
     @discardableResult
-    public func perform(_ action: String, on el: AXUIElement) -> AXError {
-        AXUIElementPerformAction(el, action as CFString)
+    public func perform(_ action: String, on el: AXUIElement, timeout: Float? = nil) -> AXError {
+        AXUIElementSetMessagingTimeout(el, timeout ?? self.timeout)
+        return AXUIElementPerformAction(el, action as CFString)
     }
 
     public func actionDescription(_ action: String, of el: AXUIElement) -> String? {
@@ -83,6 +100,18 @@ public final class AXHitTester: AccessibilityProbe {
 
     private func element(_ el: AXUIElement, _ attr: String) -> AXUIElement? {
         guard let v = raw(el, attr), CFGetTypeID(v) == AXUIElementGetTypeID() else { return nil }
-        return (v as! AXUIElement)
+        let e = v as! AXUIElement
+        AXUIElementSetMessagingTimeout(e, timeout)
+        return e
+    }
+}
+
+/// On-screen popup menus via CGWindowListCopyWindowInfo (cheap, no AX, safe on the main thread).
+public enum PopupMenuScanner {
+    public static func current() -> [PopupMenuWindow] {
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+                as? [[String: Any]] else { return [] }
+        let layer = Int(CGWindowLevelForKey(.popUpMenuWindow))
+        return PopupMenus.windows(in: list, popupLayer: layer)
     }
 }

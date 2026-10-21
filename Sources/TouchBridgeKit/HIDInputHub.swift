@@ -69,6 +69,7 @@ public final class HIDInputHub {
         let key = Self.key(for: device)
         let (token, first) = reports.add(key: key, owner: owner, handler: handler)
         if first || natives[key] == nil { registerNative(device, key: key) }
+        else { ensureScheduled(key) }
         let obs = Observation(key: key, token: token)
         if wantValues {
             let (vt, _) = values.add(key: key, owner: owner, handler: handler)
@@ -95,6 +96,17 @@ public final class HIDInputHub {
                 natives[o.key] = n
             }
         }
+    }
+
+    /// Re-add the device's event source to the main run loop. An IOHIDManager unschedules every device it
+    /// enumerated when it is unscheduled/released (TouchService.stop()); the hub's long-lived IOHIDDevice may be
+    /// one of those objects, and then no report callback fires until the app restarts. Adding an already
+    /// scheduled source again is a no-op (CFRunLoopAddSource ignores duplicates).
+    public func ensureScheduled(_ device: IOHIDDevice) { ensureScheduled(Self.key(for: device)) }
+
+    private func ensureScheduled(_ key: UInt64) {
+        guard let n = natives[key] else { return }
+        IOHIDDeviceScheduleWithRunLoop(n.device, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
     }
 
     private func registerNative(_ device: IOHIDDevice, key: UInt64) {

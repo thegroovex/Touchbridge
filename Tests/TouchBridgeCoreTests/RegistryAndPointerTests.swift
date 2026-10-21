@@ -147,8 +147,7 @@ final class AbsolutePointerTests: XCTestCase {
         sink.events = []
         now += 1
         e.update([CGPoint(x: -500, y: 300)])
-        now += 0.8
-        e.tick()
+        for _ in 0..<16 { now += 0.05; e.tick() }
         e.update([])
         XCTAssertEqual(sink.events, ["move -500,300", "rclick -500,300"])
     }

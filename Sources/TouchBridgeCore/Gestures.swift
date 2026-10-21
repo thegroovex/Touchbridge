@@ -223,6 +223,10 @@ public struct GestureConfig {
     public var twoFingerDoubleTapInterval: Double = 0.3
     /// Zuordnung Mehrfinger-Gesten -> Aktionen
     public var gestures = GestureMap.defaults
+    /// Long press fires only when the previous tick of this touch was at most this long ago. A longer gap means
+    /// the run loop was blocked; queued HID frames (possibly the lift) must be processed first, otherwise a
+    /// late tap would be mistaken for a long press.
+    public var longPressMaxTickGap: Double = 0.2
 }
 
 /// Hooks for the app: touch context menu (long press) and smart target (tap snapping)
@@ -231,10 +235,18 @@ public protocol GestureEngineDelegate: AnyObject {
     func onLongPress(at point: CGPoint) -> Bool
     /// Where a one-finger tap should click (smart target). Default: unchanged.
     func tapTarget(for point: CGPoint) -> CGPoint
+    /// Frames of popup/context menus currently on screen (global coordinates, origin top left). Default: none.
+    /// While a menu is open, taps are plain left clicks (no smart target) and a long press opens no second menu.
+    func openMenuFrames() -> [CGRect]
+    /// A tap landed outside every open menu; a plain left click has already been posted. The delegate closes the
+    /// menu if it is still open shortly after (Escape).
+    func tappedOutsideMenu(at point: CGPoint)
 }
 
 public extension GestureEngineDelegate {
     func tapTarget(for point: CGPoint) -> CGPoint { point }
+    func openMenuFrames() -> [CGRect] { [] }
+    func tappedOutsideMenu(at point: CGPoint) {}
 }
 
 public final class GestureEngine {
@@ -278,6 +290,12 @@ public final class GestureEngine {
     private var mayBeganSent = false
     /// 2-Finger-Tap, dessen Rechtsklick auf ein mögliches Doppeltippen wartet
     private var pendingRightClick: (p: CGPoint, t: Double)?
+    /// Time of the previous tick() during the current touch (nil = none yet)
+    private var prevTick: Double?
+    /// The long press of this touch happened while a menu was open: nothing fired, the lift is a menu tap
+    private var longPressInMenu = false
+    /// A synthetic left button is down (drag) – finish() always releases it
+    private var leftButtonDown = false
 
     public init(poster: EventSink, config: GestureConfig) { self.poster = poster; self.cfg = config }
 
@@ -292,6 +310,7 @@ public final class GestureEngine {
         if n == 0 { finish(now); return }
         if mode == .idle {
             startTime = now; maxFingers = 0; multiCount = 0
+            prevTick = nil; longPressInMenu = false
             if let m = momentumState {
                 // Neue Berührung stoppt den Nachlauf (wie beim Trackpad: Momentum-Ende, dann mayBegin)
                 momentumState = nil
@@ -425,6 +444,7 @@ public final class GestureEngine {
                 } else {
                     cancelMayBegin()
                     poster.mouse(.leftMouseDown, startPoint, .left)
+                    leftButtonDown = true
                     poster.mouse(.leftMouseDragged, p, .left)
                     mode = .dragging
                 }
@@ -542,8 +562,19 @@ public final class GestureEngine {
             GestureActionRunner.run(cfg.gestures[.twoFingerTap], on: poster, at: p.p)
         }
         guard mode == .oneFinger else { return }
+        let previous = prevTick
+        prevTick = now
         if now - startTime >= cfg.longPress {
+            // Stalled run loop (no tick for a while): let queued frames – maybe the lift – arrive first
+            guard let prev = previous, now - prev <= cfg.longPressMaxTickGap else { return }
             mode = .longPressed
+            // a long press never counts towards a following double click
+            lastTapTime = 0; tapCount = 0
+            if !(delegate?.openMenuFrames() ?? []).isEmpty {
+                // A menu is open: never open a second one; the lift becomes a plain menu tap
+                longPressInMenu = true
+                return
+            }
             let act = cfg.gestures[.longPress]
             if act == .contextMenu {
                 if delegate?.onLongPress(at: startPoint) != true { poster.click(startPoint, right: true) }
@@ -555,7 +586,10 @@ public final class GestureEngine {
 
     private func finish(_ now: Double) {
         if mode != .scrolling { cancelMayBegin() }
+        let menus: [CGRect] = (mode == .oneFinger || longPressInMenu) ? (delegate?.openMenuFrames() ?? []) : []
         switch mode {
+        case .oneFinger where !menus.isEmpty, .longPressed where longPressInMenu && !menus.isEmpty:
+            menuTap(startPoint, menus: menus)
         case .oneFinger:
             if now - startTime <= cfg.tapMaxDuration {
                 if now - lastTapTime < cfg.doubleTapInterval,
@@ -566,8 +600,6 @@ public final class GestureEngine {
                 poster.click(target, right: false, clicks: tapCount)
                 lastTapTime = now; lastTapPoint = startPoint
             }
-        case .dragging:
-            poster.mouse(.leftMouseUp, lastPoint, .left)
         case .twoFinger:
             if now - startTime < 0.35 {   // Zwei-Finger-Tap
                 let double = cfg.gestures[.twoFingerDoubleTap]
@@ -587,9 +619,24 @@ public final class GestureEngine {
             endTwoFinger(now, momentum: true)
         default: break
         }
+        // every synthetic mouse down gets its up (drag, or any state that was left with the button down)
+        if leftButtonDown {
+            poster.mouse(.leftMouseUp, lastPoint, .left)
+            leftButtonDown = false
+        }
         mode = .idle
         maxFingers = 0
         multiCount = 0
+        prevTick = nil
+        longPressInMenu = false
+    }
+
+    /// Tap while a popup menu is open: a plain single left click at the finger (selects the item under it, no
+    /// smart target, no double click). Outside every menu the delegate closes the menu if it stays open.
+    private func menuTap(_ p: CGPoint, menus: [CGRect]) {
+        poster.click(p, right: false, clicks: 1)
+        lastTapTime = 0; tapCount = 0
+        if !menus.contains(where: { $0.contains(p) }) { delegate?.tappedOutsideMenu(at: p) }
     }
 
     private func centroid(_ t: [CGPoint]) -> CGPoint {

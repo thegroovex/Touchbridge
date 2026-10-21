@@ -73,7 +73,7 @@ public final class PointerSuppressor {
             let me = Unmanaged<PointerSuppressor>.fromOpaque(ctx).takeUnretainedValue()
             return me.handle(type, event)
         }, userInfo: ctx) else {
-            log("⚠️  Systemzeiger-Unterdrückung: Event-Tap nicht erlaubt (\(PermissionTexts.accessibilityName) für TouchBridge erlauben).")
+            log("⚠️  System pointer suppression: event tap not allowed (allow \(PermissionTexts.accessibilityName) for TouchBridge).")
             return false
         }
         tap = t
@@ -82,7 +82,7 @@ public final class PointerSuppressor {
         CFRunLoopAddSource(CFRunLoopGetMain(), s, .commonModes)
         CGEvent.tapEnable(tap: t, enable: true)
         active = true
-        log("🛡  Systemzeiger-Unterdrückung aktiv (Event-Tap; Absender-ID " + (stats.senderIDAvailable ? "verfügbar" : "nicht verfügbar – Zeitkorrelation") + ").")
+        log("🛡  System pointer suppression active (event tap; sender ID " + (stats.senderIDAvailable ? "available" : "not available – time correlation") + ").")
         return true
     }
 
@@ -92,13 +92,13 @@ public final class PointerSuppressor {
         if let t = tap { CGEvent.tapEnable(tap: t, enable: false); CFMachPortInvalidate(t) }
         if let s = source { CFRunLoopRemoveSource(CFRunLoopGetMain(), s, .commonModes) }
         tap = nil; source = nil
-        log("🛡  Systemzeiger-Unterdrückung aus (verworfen: \(stats.droppedBySender) per Absender-ID, \(stats.droppedByTime) per Zeitkorrelation).")
+        log("🛡  System pointer suppression off (dropped: \(stats.droppedBySender) by sender ID, \(stats.droppedByTime) by time correlation).")
     }
 
     public var statsLine: String {
-        "Systemzeiger-Unterdrückung: " + (active ? "aktiv" : "aus")
-            + " – Absender-ID " + (PointerSuppressor.senderIDSupported ? "verfügbar" : "nicht verfügbar")
-            + ", verworfen \(stats.droppedBySender) (Absender) / \(stats.droppedByTime) (Zeit), durchgelassen \(stats.passed)"
+        "System pointer suppression: " + (active ? "active" : "off")
+            + " – sender ID " + (PointerSuppressor.senderIDSupported ? "available" : "not available")
+            + ", dropped \(stats.droppedBySender) (sender) / \(stats.droppedByTime) (time), passed \(stats.passed)"
     }
 
     private func handle(_ type: CGEventType, _ event: CGEvent) -> Unmanaged<CGEvent>? {
@@ -112,10 +112,10 @@ public final class PointerSuppressor {
             senderID: PointerSuppressor.senderID(of: event),
             time: CFAbsoluteTimeGetCurrent())
         if info.userData != SystemPointerFilter.marker && info.sourcePID == 0 && samples.count < 12 {
-            samples.append(String(format: "Event-Tap: Typ %d pid %lld state %lld subtype %lld sender %@",
+            samples.append(String(format: "Event tap: type %d pid %lld state %lld subtype %lld sender %@",
                                   type.rawValue, info.sourcePID, event.getIntegerValueField(.eventSourceStateID),
                                   event.getIntegerValueField(.mouseEventSubtype),
-                                  info.senderID.map { String(format: "0x%llX", $0) + (deviceIDs.contains($0) ? " (Touch-Monitor)" : "") } ?? "–"))
+                                  info.senderID.map { String(format: "0x%llX", $0) + (deviceIDs.contains($0) ? " (touch monitor)" : "") } ?? "–"))
         }
         switch filter.verdict(info, deviceIDs: deviceIDs, lastReport: lastReport(), touching: touching()) {
         case .pass: stats.passed += 1; return Unmanaged.passUnretained(event)

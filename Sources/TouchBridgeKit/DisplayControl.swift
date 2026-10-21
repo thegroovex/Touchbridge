@@ -58,10 +58,10 @@ public final class DisplayControl {
     public static func forgetDDC(_ id: CGDirectDisplayID) { UserDefaults.standard.removeObject(forKey: memoryKey(id)) }
 
     private func runProbe() {
-        var lines = [String(format: "DDC: Bildschirm %u (Vendor 0x%04X, Modell 0x%04X), DCPAVServiceProxy External: %d, Dienst zugeordnet: %@",
+        var lines = [String(format: "DDC: display %u (vendor 0x%04X, model 0x%04X), DCPAVServiceProxy external: %d, service matched: %@",
                             display, CGDisplayVendorNumber(display), CGDisplayModelNumber(display), serviceCount,
-                            av == nil ? "nein" : "ja")]
-        if CGDisplayIsBuiltin(display) != 0 { lines.append("DDC: interner Bildschirm – kein DDC") }
+                            av == nil ? "no" : "yes")]
+        if CGDisplayIsBuiltin(display) != 0 { lines.append("DDC: built-in display – no DDC") }
         var ok = false
         if let av = av {
             let r = av.readVCPTraced(DDC.VCP.brightness.rawValue, attempts: 5)
@@ -72,7 +72,7 @@ public final class DisplayControl {
                 UserDefaults.standard.set(true, forKey: DisplayControl.memoryKey(display))
             }
         }
-        lines.append("DDC-Probe: " + (ok ? "OK" : "keine Antwort") + (DisplayControl.rememberedDDC(display) ? " (früher schon erfolgreich – Regler bleiben)" : ""))
+        lines.append("DDC-Probe: " + (ok ? "OK" : "no response") + (DisplayControl.rememberedDDC(display) ? " (succeeded before – sliders stay)" : ""))
         probeOK = ok
         probeDetails = lines
     }
@@ -186,22 +186,22 @@ final class AVService {
     /// Wie readVCP, mit Protokoll (Write-/Read-Return-Codes, Rohantwort) und längeren Pausen.
     func readVCPTraced(_ vcp: UInt8, attempts: Int) -> (value: (current: UInt16, max: UInt16)?, trace: [String]) {
         guard let w = AVService.writeI2C, let r = AVService.readI2C else {
-            return (nil, ["DDC: IOAVServiceWriteI2C/ReadI2C nicht verfügbar (Intel-Mac?)"])
+            return (nil, ["DDC: IOAVServiceWriteI2C/ReadI2C not available (Intel Mac?)"])
         }
         var trace: [String] = []
         var req = DDC.getPacket(vcp: vcp)
         for i in 1...max(1, attempts) {
             let wr = req.withUnsafeMutableBytes { w(ref, DDC.chipAddress, DDC.dataAddress, $0.baseAddress!, UInt32($0.count)) }
             guard wr == kIOReturnSuccess else {
-                trace.append("DDC Versuch \(i): Write " + HIDReturn.describe(wr))
+                trace.append("DDC attempt \(i): Write " + HIDReturn.describe(wr))
                 usleep(100_000); continue
             }
             usleep(80_000)
             var buf = [UInt8](repeating: 0, count: 12)
             let rr = buf.withUnsafeMutableBytes { r(ref, DDC.chipAddress, DDC.dataAddress, $0.baseAddress!, UInt32($0.count)) }
             let v = rr == kIOReturnSuccess ? DDC.parseReply(buf, vcp: vcp) : nil
-            trace.append("DDC Versuch \(i): Write OK, Read " + HIDReturn.describe(rr) + " Antwort [" + HIDFeature.hex(buf) + "]"
-                         + (v.map { " -> \($0.current)/\($0.max)" } ?? " (ungültig)"))
+            trace.append("DDC attempt \(i): Write OK, Read " + HIDReturn.describe(rr) + " reply [" + HIDFeature.hex(buf) + "]"
+                         + (v.map { " -> \($0.current)/\($0.max)" } ?? " (invalid)"))
             if let v = v { return (v, trace) }
             usleep(100_000)
         }

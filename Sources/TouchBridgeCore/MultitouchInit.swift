@@ -161,12 +161,12 @@ public enum MultitouchSequence: String, Codable, CaseIterable {
 
     public var title: String {
         switch self {
-        case .hidInputGet: return "a) GetReport Input (Linux-Init)"
-        case .hidFeature: return "b) Feature 0x0A/0x21 über IOHID"
-        case .usbLinuxInit: return "c) USB-Control: SET_IDLE + Input Mode (Gerät)"
-        case .usbInterfaceLinuxInit: return "c') USB-Control über Interface-Client"
-        case .usbReenumerateInit: return "d) Neu-Enumeration + sofort Linux-Init"
-        case .hidSetValue: return "e) IOHIDDeviceSetValue Device Mode = 2 (Xeneon-Toolbox-Ansatz)"
+        case .hidInputGet: return L("a) GetReport Input (Linux init)", "a) GetReport Input (Linux-Init)")
+        case .hidFeature: return L("b) Feature 0x0A/0x21 via IOHID", "b) Feature 0x0A/0x21 über IOHID")
+        case .usbLinuxInit: return L("c) USB control: SET_IDLE + Input Mode (device)", "c) USB-Control: SET_IDLE + Input Mode (Gerät)")
+        case .usbInterfaceLinuxInit: return L("c') USB control via interface client", "c') USB-Control über Interface-Client")
+        case .usbReenumerateInit: return L("d) Re-enumeration + immediate Linux init", "d) Neu-Enumeration + sofort Linux-Init")
+        case .hidSetValue: return L("e) IOHIDDeviceSetValue Device Mode = 2 (Xeneon Toolbox approach)", "e) IOHIDDeviceSetValue Device Mode = 2 (Xeneon-Toolbox-Ansatz)")
         }
     }
 
@@ -187,9 +187,9 @@ public enum MultitouchVerdict: Equatable {
 
     public var text: String {
         switch self {
-        case .multitouch: return "✅ Digitizer-Reports (Report 13) empfangen – Multitouch-Modus aktiv"
-        case .pointerOnly: return "✗ nur Maus-Reports (Report 7) – weiterhin Mausmodus"
-        case .noTouch: return "– keine Reports (nicht getippt?)"
+        case .multitouch: return "✅ Digitizer reports (report 13) received – multitouch mode active"
+        case .pointerOnly: return "✗ mouse reports only (report 7) – still in mouse mode"
+        case .noTouch: return "– no reports (not touched?)"
         }
     }
 }

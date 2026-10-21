@@ -42,26 +42,26 @@ public enum HIDOpenMessages {
         case HIDReturnCode.exclusiveAccess:
             if !others.isEmpty {
                 let list = others.map { "\($0.name) [\($0.pid)]" }.joined(separator: ", ")
-                return "Gerät belegt (exklusiv) – TouchBridge läuft doppelt: \(list)" + code
+                return L("Device busy (exclusive) – TouchBridge is running twice: \(list)", "Gerät belegt (exklusiv) – TouchBridge läuft doppelt: \(list)") + code
             }
-            if legacyAgent { return "Gerät belegt (exklusiv) – alter LaunchAgent com.groovex.touchbridge aktiv" + code }
-            if let h = holders.first { return "Gerät exklusiv von macOS belegt (\(h))" + code }
-            return "Gerät exklusiv von einem macOS-Treiber/-Dienst belegt" + code
+            if legacyAgent { return L("Device busy (exclusive) – old LaunchAgent com.groovex.touchbridge active", "Gerät belegt (exklusiv) – alter LaunchAgent com.groovex.touchbridge aktiv") + code }
+            if let h = holders.first { return L("Device held exclusively by macOS (\(h))", "Gerät exklusiv von macOS belegt (\(h))") + code }
+            return L("Device held exclusively by a macOS driver/service", "Gerät exklusiv von einem macOS-Treiber/-Dienst belegt") + code
         case HIDReturnCode.notPermitted, HIDReturnCode.notPrivileged:
-            return "Keine Berechtigung für exklusiven Zugriff" + code
+            return L("No permission for exclusive access", "Keine Berechtigung für exklusiven Zugriff") + code
         default:
-            return "Exklusiver Zugriff fehlgeschlagen" + code
+            return L("Exclusive access failed", "Exklusiver Zugriff fehlgeschlagen") + code
         }
     }
 
     public static func openFailure(rc: UInt32, others: [OtherInstance], legacyAgent: Bool) -> String {
         switch rc {
         case HIDReturnCode.notPermitted, HIDReturnCode.notPrivileged:
-            return "Keine Berechtigung (Eingabeüberwachung) – Gerät ließ sich nicht öffnen (\(HIDReturnCode.hex(rc)))"
+            return L("No permission (Input Monitoring) – could not open device (\(HIDReturnCode.hex(rc)))", "Keine Berechtigung (Eingabeüberwachung) – Gerät ließ sich nicht öffnen (\(HIDReturnCode.hex(rc)))")
         case HIDReturnCode.exclusiveAccess:
             return seizeFailure(rc: rc, others: others, legacyAgent: legacyAgent)
         default:
-            return "Touch-Gerät ließ sich nicht öffnen (\(HIDReturnCode.hex(rc)))"
+            return L("Could not open touch device (\(HIDReturnCode.hex(rc)))", "Touch-Gerät ließ sich nicht öffnen (\(HIDReturnCode.hex(rc)))")
         }
     }
 }
@@ -112,7 +112,7 @@ public enum PermissionTexts {
     public static var staleHint: String { L("Stale entry – remove it in System Settings (–) and add it again", "Eintrag veraltet – in Systemeinstellungen entfernen (–) und neu hinzufügen") }
     /// Name der Privacy-Seite: ab macOS 27 „Gerätesteuerung und Datenzugriff“, vorher „Bedienungshilfen“
     public static var accessibilityName: String { L("Accessibility (\"Device control and data access\")", "Gerätesteuerung und Datenzugriff (Bedienungshilfen)") }
-    public static let accessibilityPath = "Systemeinstellungen › Datenschutz & Sicherheit › Gerätesteuerung und Datenzugriff (älteres macOS: Bedienungshilfen)"
+    public static var accessibilityPath: String { L("System Settings › Privacy & Security › Accessibility (\"Device control and data access\" on newer macOS)", "Systemeinstellungen › Datenschutz & Sicherheit › Gerätesteuerung und Datenzugriff (älteres macOS: Bedienungshilfen)") }
     public static func accessibility(trusted: Bool, asked: Bool) -> String? {
         if trusted { return nil }
         return asked ? L("\(accessibilityName) missing – if already enabled: ", "\(accessibilityName) fehlt – falls schon aktiviert: ") + staleHint : L("\(accessibilityName) not allowed yet", "\(accessibilityName) noch nicht erlaubt")
@@ -151,13 +151,13 @@ public enum SigningPolicy {
     /// Neues Bundle muss mit demselben Leaf-Zertifikat signiert sein wie die laufende App – sofern diese schon so signiert ist.
     public static func checkUpdate(currentLeaf: String?, newLeaf: String?) -> UpdateDecision {
         guard let cur = currentLeaf.map(normalize), !cur.isEmpty else {
-            return .allowed("laufende App ist ad-hoc signiert – kein Zertifikatsvergleich möglich")
+            return .allowed("running app is ad-hoc signed – certificate comparison not possible")
         }
         guard let new = newLeaf.map(normalize), !new.isEmpty else {
-            return .rejected("neues Bundle ist nicht mit dem TouchBridge-Zertifikat signiert (ad-hoc)")
+            return .rejected("new bundle is not signed with the TouchBridge certificate (ad-hoc)")
         }
-        return cur == new ? .allowed("gleiches Zertifikat (SHA-1 \(new))")
-                          : .rejected("anderes Zertifikat (erwartet \(cur), erhalten \(new))")
+        return cur == new ? .allowed("same certificate (SHA-1 \(new))")
+                          : .rejected("different certificate (expected \(cur), got \(new))")
     }
 }
 
@@ -197,17 +197,17 @@ public struct HIDHolderReport: Equatable {
     }
 
     public func lines(ownPID: Int32) -> [String] {
-        if interfaces.isEmpty { return ["ioreg: kein IOHIDDevice mit dieser VID/PID gefunden"] }
+        if interfaces.isEmpty { return ["ioreg: no IOHIDDevice with this VID/PID found"] }
         var l: [String] = []
         for (n, i) in interfaces.enumerated() {
             l.append("[ioreg \(n)] \(i.name) <\(i.objectClass)> id=\(i.registryID.map { String(format: "0x%llX", $0) } ?? "?")"
-                     + " Transport \(i.transport ?? "?")" + " Built-In \(i.builtIn.map { $0 ? "ja" : "nein" } ?? "?")")
+                     + " Transport \(i.transport ?? "?")" + " Built-In \(i.builtIn.map { $0 ? "yes" : "no" } ?? "?")")
             l.append("   DeviceUsagePairs [\(i.usagePairs.joined(separator: ", "))]")
-            l.append("   Treiber: " + (i.drivers.isEmpty ? "–" : i.drivers.joined(separator: ", ")))
+            l.append("   Drivers: " + (i.drivers.isEmpty ? "–" : i.drivers.joined(separator: ", ")))
             l.append("   Clients: " + (i.userClients.isEmpty ? "–" : i.userClients.map {
-                $0.hasPrefix("pid \(ownPID),") ? $0 + " (TouchBridge selbst)" : $0 }.joined(separator: "; ")))
+                $0.hasPrefix("pid \(ownPID),") ? $0 + " (TouchBridge itself)" : $0 }.joined(separator: "; ")))
             let own = i.userClients.filter { $0.hasPrefix("pid \(ownPID),") }.count
-            if own > 1 { l.append("   ❌ FEHLER: TouchBridge hält \(own) Clients auf diesem Interface (doppelt geöffnet)") }
+            if own > 1 { l.append("   ❌ ERROR: TouchBridge holds \(own) clients on this interface (opened twice)") }
         }
         return l
     }
@@ -295,7 +295,7 @@ public struct SystemPointerFilter {
 
 /// Rolle einer HID-Schnittstelle des Touch-Monitors (für Menü und Diagnose).
 public enum InterfaceRole: String, Equatable {
-    case touch = "Touch", mouse = "Maus", keyboard = "Tastatur", vendor = "Vendor", other = "HID"
+    case touch = "Touch", mouse = "Mouse", keyboard = "Keyboard", vendor = "Vendor", other = "HID"
     public var title: String {
         switch self {
         case .mouse: return L("Mouse", "Maus")

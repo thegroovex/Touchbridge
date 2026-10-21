@@ -14,7 +14,7 @@ final class HIDObserverTableTests: XCTestCase {
         let r1 = t.add(key: 0x1_0009_8EB1, owner: a) { o, e in o.got.append(e) }
         let r2 = t.add(key: 0x1_0009_8EB1, owner: b) { o, e in o.got.append(e) }
         XCTAssertTrue(r1.needsNativeRegistration)
-        XCTAssertFalse(r2.needsNativeRegistration, "Diagnose hängt sich nur als Beobachter an")
+        XCTAssertFalse(r2.needsNativeRegistration, "diagnostics only attaches as an observer")
         XCTAssertEqual(t.dispatch(key: 0x1_0009_8EB1, 7), 2)
         XCTAssertEqual(a.got, [7]); XCTAssertEqual(b.got, [7])
         // anderes Gerät: eigene Registrierung
@@ -27,7 +27,7 @@ final class HIDObserverTableTests: XCTestCase {
         let r = t.add(key: 42, owner: a) { o, e in o.got.append(e) }
         t.remove(r.token)
         XCTAssertEqual(t.dispatch(key: 42, 1), 0)
-        XCTAssertTrue(t.isRegistered(key: 42), "Puffer/Callback bleiben bis zum Abstecken registriert")
+        XCTAssertTrue(t.isRegistered(key: 42), "buffer/callback stay registered until unplug")
         // neuer Beobachter nach stop()/start(): keine zweite native Registrierung
         XCTAssertFalse(t.add(key: 42, owner: a) { _, _ in }.needsNativeRegistration)
     }
@@ -66,7 +66,7 @@ final class HIDObserverTableTests: XCTestCase {
         let c = HIDObserverTable<Int>.context(for: key)
         XCTAssertNotNil(c)
         XCTAssertEqual(HIDObserverTable<Int>.key(from: c), key)
-        XCTAssertEqual(HIDObserverTable<Int>.context(for: key), c, "gleicher Context für Registrieren und Abmelden")
+        XCTAssertEqual(HIDObserverTable<Int>.context(for: key), c, "same context for register and unregister")
         XCTAssertNil(HIDObserverTable<Int>.key(from: nil))
     }
 
@@ -92,7 +92,7 @@ final class AbsolutePointerTests: XCTestCase {
         XCTAssertFalse(x.isRelative); XCTAssertFalse(y.isRelative); XCTAssertTrue(wheel.isRelative)
         XCTAssertEqual(x.logicalMax, 16383); XCTAssertEqual(y.logicalMax, 9599)
         XCTAssertEqual(x.bitOffset, 8); XCTAssertEqual(y.bitOffset, 24)
-        XCTAssertTrue(TouchLayout.build(from: d).isEmpty, "keine Multitouch-Finger")
+        XCTAssertTrue(TouchLayout.build(from: d).isEmpty, "no multitouch fingers")
         let p = TouchLayout.absolutePointer(from: d)
         XCTAssertEqual(Array(p.keys), [7])
         XCTAssertTrue(p[7]!.isPointer)
@@ -113,7 +113,7 @@ final class AbsolutePointerTests: XCTestCase {
         XCTAssertEqual(move?.contacts, [RawContact(id: 0, x: 16383, y: 9599)])
         let up = a.feed(Fixtures.hex("07 00 FF 3F 7F 25 00"))
         XCTAssertEqual(up?.contacts, [])
-        XCTAssertNil(a.feed(Fixtures.hex("08 01 40 1F 88 13 00")), "fremde Report-ID")
+        XCTAssertNil(a.feed(Fixtures.hex("08 01 40 1F 88 13 00")), "foreign report ID")
     }
 
     func testPointerMapsToAnmiteFrameWithNegativeOrigin() {

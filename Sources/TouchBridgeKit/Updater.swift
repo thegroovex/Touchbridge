@@ -13,16 +13,16 @@ public final class Updater {
              noApp, wrongBundle(String), wrongVersion(String), signature(String), install(String)
         public var errorDescription: String? {
             switch self {
-            case .network(let m): return "Download fehlgeschlagen: \(m)"
-            case .noAsset: return "Im Release fehlt das DMG."
-            case .noChecksum: return "Im Release fehlt SHA256SUMS.txt bzw. der Eintrag für das DMG."
-            case let .checksumMismatch(a, b): return "Prüfsumme stimmt nicht (erwartet \(a), erhalten \(b))."
-            case .mount(let m): return "DMG ließ sich nicht öffnen: \(m)"
-            case .noApp: return "Im DMG wurde keine TouchBridge.app gefunden."
-            case .wrongBundle(let b): return "Falsche App im DMG (Bundle-ID \(b))."
-            case .wrongVersion(let v): return "Version im DMG passt nicht (\(v))."
-            case .signature(let m): return "Code-Signatur ungültig: \(m)"
-            case .install(let m): return "Installation fehlgeschlagen: \(m)"
+            case .network(let m): return L("Download failed: \(m)", "Download fehlgeschlagen: \(m)")
+            case .noAsset: return L("The release has no DMG.", "Im Release fehlt das DMG.")
+            case .noChecksum: return L("The release is missing SHA256SUMS.txt or the entry for the DMG.", "Im Release fehlt SHA256SUMS.txt bzw. der Eintrag für das DMG.")
+            case let .checksumMismatch(a, b): return L("Checksum mismatch (expected \(a), got \(b)).", "Prüfsumme stimmt nicht (erwartet \(a), erhalten \(b)).")
+            case .mount(let m): return L("Could not open DMG: \(m)", "DMG ließ sich nicht öffnen: \(m)")
+            case .noApp: return L("No TouchBridge.app found in the DMG.", "Im DMG wurde keine TouchBridge.app gefunden.")
+            case .wrongBundle(let b): return L("Wrong app in the DMG (bundle ID \(b)).", "Falsche App im DMG (Bundle-ID \(b)).")
+            case .wrongVersion(let v): return L("Version in the DMG does not match (\(v)).", "Version im DMG passt nicht (\(v)).")
+            case .signature(let m): return L("Invalid code signature: \(m)", "Code-Signatur ungültig: \(m)")
+            case .install(let m): return L("Installation failed: \(m)", "Installation fehlgeschlagen: \(m)")
             }
         }
     }
@@ -52,13 +52,13 @@ public final class Updater {
             if let e = err {
                 result = .failure(UpdateError.network(e.localizedDescription))
             } else if let h = resp as? HTTPURLResponse, h.statusCode != 200 {
-                result = .failure(UpdateError.network("GitHub antwortet mit HTTP \(h.statusCode)"))
+                result = .failure(UpdateError.network("GitHub responded with HTTP \(h.statusCode)"))
             } else {
                 do {
                     let list = try UpdateLogic.decodeReleases(data ?? Data())
                     result = .success(UpdateLogic.pickUpdate(list, current: current, includePrereleases: includePrereleases,
                                                              skipped: skipped))
-                } catch { result = .failure(UpdateError.network("Antwort unlesbar: \(error.localizedDescription)")) }
+                } catch { result = .failure(UpdateError.network("unreadable response: \(error.localizedDescription)")) }
             }
             DispatchQueue.main.async { completion(result) }
         }.resume()
@@ -70,8 +70,8 @@ public final class Updater {
         URLSession.shared.downloadTask(with: request(url)) { tmp, resp, err in
             defer { sem.signal() }
             if let e = err { failure = UpdateError.network(e.localizedDescription); return }
-            if let h = resp as? HTTPURLResponse, h.statusCode != 200 { failure = UpdateError.network("HTTP \(h.statusCode) für \(url.lastPathComponent)"); return }
-            guard let tmp = tmp else { failure = UpdateError.network("keine Datei"); return }
+            if let h = resp as? HTTPURLResponse, h.statusCode != 200 { failure = UpdateError.network("HTTP \(h.statusCode) for \(url.lastPathComponent)"); return }
+            guard let tmp = tmp else { failure = UpdateError.network("no file"); return }
             do {
                 try? FileManager.default.removeItem(at: dest)
                 try FileManager.default.moveItem(at: tmp, to: dest)
@@ -97,7 +97,7 @@ public final class Updater {
 
     public static func sha256(of url: URL) throws -> String {
         let h = FileHandle(forReadingAtPath: url.path)
-        guard let fh = h else { throw UpdateError.network("Datei nicht lesbar") }
+        guard let fh = h else { throw UpdateError.network("file not readable") }
         defer { fh.closeFile() }
         var hasher = SHA256()
         while true {
@@ -116,7 +116,7 @@ public final class Updater {
         try? FileManager.default.removeItem(at: work)
         try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
         let dmg = work.appendingPathComponent(dmgAsset.name), sums = work.appendingPathComponent("SHA256SUMS.txt")
-        log("⬇️  Lade \(dmgAsset.name) …")
+        log("⬇️  Downloading \(dmgAsset.name) …")
         try download(sumsURL, to: sums)
         try download(dmgURL, to: dmg)
         let table = UpdateLogic.parseSHA256Sums((try? String(contentsOf: sums, encoding: .utf8)) ?? "")
@@ -134,7 +134,7 @@ public final class Updater {
         guard FileManager.default.fileExists(atPath: srcApp.path) else { throw UpdateError.noApp }
         let newApp = work.appendingPathComponent("TouchBridge.app")
         let cp = Updater.run("/usr/bin/ditto", [srcApp.path, newApp.path])
-        guard cp.status == 0 else { throw UpdateError.install("Kopieren: " + cp.output) }
+        guard cp.status == 0 else { throw UpdateError.install("copy: " + cp.output) }
 
         guard let info = NSDictionary(contentsOf: newApp.appendingPathComponent("Contents/Info.plist")) else { throw UpdateError.noApp }
         let bid = info["CFBundleIdentifier"] as? String ?? "?"
@@ -153,16 +153,16 @@ public final class Updater {
         let decision = SigningPolicy.checkUpdate(currentLeaf: currentLeaf, newLeaf: newLeaf)
         switch decision {
         case .rejected(let why): throw UpdateError.signature(why)
-        case .allowed(let why): log("🔏 Zertifikat: \(why)")
+        case .allowed(let why): log("🔏 Certificate: \(why)")
         }
         if let cur = currentLeaf {
             let req = "certificate leaf = H\"\(cur.lowercased())\""
             let r = Updater.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "-R=\(req)", newApp.path])
-            guard r.status == 0 else { throw UpdateError.signature("Anforderung „\(req)“ nicht erfüllt: \(r.output)") }
+            guard r.status == 0 else { throw UpdateError.signature("requirement '\(req)' not satisfied: \(r.output)") }
         }
         // Gatekeeper: heruntergeladene App ist ad-hoc signiert – Quarantäne entfernen (vom User ausdrücklich gewünscht)
         Updater.run("/usr/bin/xattr", ["-dr", "com.apple.quarantine", newApp.path])
-        log("✅ TouchBridge \(ver) geprüft (Bundle-ID, Version, Signatur, Zertifikat).")
+        log("✅ TouchBridge \(ver) verified (bundle ID, version, signature, certificate).")
         return newApp
     }
 
@@ -171,10 +171,10 @@ public final class Updater {
         let fm = FileManager.default
         do {
             _ = try fm.replaceItemAt(target, withItemAt: newApp, backupItemName: "TouchBridge-alt.app", options: [])
-            log("✅ App ersetzt: \(target.path)")
+            log("✅ App replaced: \(target.path)")
             return
         } catch {
-            log("ℹ️  Direktes Ersetzen nicht möglich (\(error.localizedDescription)) – frage nach Administrator-Rechten.")
+            log("ℹ️  Direct replace not possible (\(error.localizedDescription)) – asking for administrator rights.")
         }
         func q(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
         let cmd = "rm -rf \(q(target.path)) && /usr/bin/ditto \(q(newApp.path)) \(q(target.path)) && /usr/bin/xattr -dr com.apple.quarantine \(q(target.path))"
@@ -183,8 +183,8 @@ public final class Updater {
         var ok = false
         let run = { ok = NSAppleScript(source: script)?.executeAndReturnError(&err) != nil }
         if Thread.isMainThread { run() } else { DispatchQueue.main.sync(execute: run) }
-        guard ok else { throw UpdateError.install((err?[NSAppleScript.errorMessage] as? String) ?? "abgebrochen") }
-        log("✅ App mit Administrator-Rechten ersetzt: \(target.path)")
+        guard ok else { throw UpdateError.install((err?[NSAppleScript.errorMessage] as? String) ?? "cancelled") }
+        log("✅ App replaced with administrator rights: \(target.path)")
     }
 
     /// Kleines Shell-Skript: wartet, bis dieser Prozess beendet ist, und startet die neue App.

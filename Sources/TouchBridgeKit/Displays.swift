@@ -10,7 +10,7 @@ public struct DisplayInfo: Equatable {
     public let isMain: Bool
 
     public var summary: String {
-        "\(name) – \(Int(bounds.width))×\(Int(bounds.height))" + (isMain ? " (Hauptbildschirm)" : "")
+        "\(name) – \(Int(bounds.width))×\(Int(bounds.height))" + (isMain ? L(" (main display)", " (Hauptbildschirm)") : "")
     }
 }
 
@@ -30,7 +30,7 @@ public enum Displays {
                 if #available(macOS 10.15, *) { return s.localizedName }
             }
         }
-        return CGDisplayIsBuiltin(id) != 0 ? "Integrierter Bildschirm" : "Bildschirm \(id)"
+        return CGDisplayIsBuiltin(id) != 0 ? L("Built-in display", "Integrierter Bildschirm") : L("Display \(id)", "Bildschirm \(id)")
     }
 
     public static func all() -> [DisplayInfo] {

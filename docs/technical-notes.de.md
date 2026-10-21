@@ -58,7 +58,7 @@ a) GetReport Input 13/7 (Linux-Init), b) Feature 0x0A/0x21 lesen + Input Mode 2 
 Entitlement), c') dieselbe über den Interface-Client, d) USB-Neu-Enumeration und sofort danach die Linux-Sequenz.
 Der Vendor-Kanal (0xFF0A) wird nur gelesen. Die erfolgreiche Sequenz wird gespeichert und beim Verbinden automatisch
 angewendet (Terminal: `--mt-sequence NAME`). Das Protokoll landet in der Zwischenablage und als
-„TouchBridge-MT-Experimente.txt“ auf dem Schreibtisch.
+„TouchBridge-MT-Experiments.txt“ auf dem Schreibtisch.
 
 Touch-Ziel ist immer der Anmite (Bildschirmname „ANMITE“/„A140W05T“), auch gegen eine gespeicherte Bildschirmwahl;
 der integrierte Bildschirm wird nie automatisch Touch-Ziel.

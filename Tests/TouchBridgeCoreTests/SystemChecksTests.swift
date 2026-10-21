@@ -12,17 +12,17 @@ final class SystemChecksTests: XCTestCase {
     func testSeizeMessageOnlyBlamesDuplicateWhenOneExists() {
         let ex = HIDReturnCode.exclusiveAccess
         let dup = HIDOpenMessages.seizeFailure(rc: ex, others: [OtherInstance(pid: 7, name: "touchbridge")], legacyAgent: false)
-        XCTAssertTrue(dup.contains("doppelt"), dup)
+        XCTAssertTrue(dup.contains("twice"), dup)
         XCTAssertTrue(dup.contains("0xE00002C5"), dup)
         let agent = HIDOpenMessages.seizeFailure(rc: ex, others: [], legacyAgent: true)
         XCTAssertTrue(agent.contains("LaunchAgent"), agent)
         let sys = HIDOpenMessages.seizeFailure(rc: ex, others: [], legacyAgent: false)
-        XCTAssertFalse(sys.contains("doppelt"), sys)
+        XCTAssertFalse(sys.contains("twice"), sys)
         XCTAssertTrue(sys.contains("macOS"), sys)
         let perm = HIDOpenMessages.seizeFailure(rc: HIDReturnCode.notPermitted, others: [OtherInstance(pid: 7, name: "x")], legacyAgent: true)
-        XCTAssertTrue(perm.contains("Keine Berechtigung"), perm)
+        XCTAssertTrue(perm.contains("No permission"), perm)
         XCTAssertTrue(perm.contains("0xE00002E2"), perm)
-        XCTAssertFalse(perm.contains("doppelt"))
+        XCTAssertFalse(perm.contains("twice"))
         XCTAssertTrue(HIDOpenMessages.openFailure(rc: 0xE00002BC, others: [], legacyAgent: false).contains("0xE00002BC"))
     }
 
@@ -64,7 +64,7 @@ final class SystemChecksTests: XCTestCase {
         t.opened(1, exclusive: false)
         XCTAssertTrue(t.isOpen(1))
         XCTAssertFalse(t.isExclusive(1))
-        XCTAssertTrue(t.mustCloseBeforeOpen(1), "Retry darf kein zweites Open auf ein offenes Interface machen")
+        XCTAssertTrue(t.mustCloseBeforeOpen(1), "retry must not open an already open interface a second time")
         t.closed(1)
         t.opened(1, exclusive: true)
         XCTAssertTrue(t.isExclusive(1))
@@ -120,9 +120,9 @@ final class SystemChecksTests: XCTestCase {
         XCTAssertTrue(holders.contains("AppleUserHIDEventDriver"))
         XCTAssertFalse(holders.contains { $0.contains("63268") })
         let lines = r.lines(ownPID: 63268).joined(separator: "\n")
-        XCTAssertTrue(lines.contains("❌ FEHLER: TouchBridge hält 2 Clients"), lines)
-        XCTAssertTrue(lines.contains("(TouchBridge selbst)"))
-        XCTAssertTrue(HIDHolderReport.analyze(plist: Data("kaputt".utf8), vid: 1, pid: 1).interfaces.isEmpty)
+        XCTAssertTrue(lines.contains("❌ ERROR: TouchBridge holds 2 clients"), lines)
+        XCTAssertTrue(lines.contains("(TouchBridge itself)"))
+        XCTAssertTrue(HIDHolderReport.analyze(plist: Data("broken".utf8), vid: 1, pid: 1).interfaces.isEmpty)
     }
 
     func testSystemPointerFilter() {
@@ -134,7 +134,7 @@ final class SystemChecksTests: XCTestCase {
         XCTAssertEqual(f.verdict(ev(SystemPointerFilter.marker, sender: 11), deviceIDs: ids, lastReport: 100, touching: true), .pass)
         XCTAssertEqual(f.verdict(ev(pid: 123), deviceIDs: ids, lastReport: 100, touching: true), .pass)
         XCTAssertEqual(f.verdict(ev(sender: 11), deviceIDs: ids, lastReport: nil, touching: false), .dropSender)
-        XCTAssertEqual(f.verdict(ev(sender: 99), deviceIDs: ids, lastReport: 100, touching: true), .pass, "andere Maus geht durch")
+        XCTAssertEqual(f.verdict(ev(sender: 99), deviceIDs: ids, lastReport: 100, touching: true), .pass, "other mouse passes through")
         XCTAssertEqual(f.verdict(ev(t: 100.05), deviceIDs: ids, lastReport: 100, touching: false), .dropCorrelated)
         XCTAssertEqual(f.verdict(ev(t: 101), deviceIDs: ids, lastReport: 100, touching: false), .pass)
         XCTAssertEqual(f.verdict(ev(t: 101), deviceIDs: ids, lastReport: 100, touching: true), .dropCorrelated)

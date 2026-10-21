@@ -148,8 +148,8 @@ public enum MIDILayoutPreset: String, Codable, CaseIterable {
             let upper = KeyboardZone(keys: keys, baseNote: baseNote + 12, scale: scale)
             let lower = KeyboardZone(keys: keys, baseNote: baseNote, scale: scale)
             return MIDILayout(name: "MPE-Keyboard", zones: [
-                Zone("Obere Reihe", NRect(0, 0, 1, 0.5).inset(gap, gap), .keyboard(upper)),
-                Zone("Untere Reihe", NRect(0, 0.5, 1, 0.5).inset(gap, gap), .keyboard(lower)),
+                Zone("Upper row", NRect(0, 0, 1, 0.5).inset(gap, gap), .keyboard(upper)),
+                Zone("Lower row", NRect(0, 0.5, 1, 0.5).inset(gap, gap), .keyboard(lower)),
             ])
 
         case .performance:

@@ -44,8 +44,8 @@ public enum SystemCheck {
         let b = run("/bin/launchctl", ["bootout", "gui/\(getuid())/\(legacyAgentLabel)"])
         log.append("launchctl bootout gui/\(getuid())/\(legacyAgentLabel): \(b.status == 0 ? "ok" : "Status \(b.status) \(b.output.trimmingCharacters(in: .whitespacesAndNewlines))")")
         if legacyAgentFilePresent {
-            do { try FileManager.default.removeItem(at: legacyAgentURL); log.append("gelöscht: \(legacyAgentURL.path)") }
-            catch { log.append("Löschen fehlgeschlagen: \(error.localizedDescription)") }
+            do { try FileManager.default.removeItem(at: legacyAgentURL); log.append("deleted: \(legacyAgentURL.path)") }
+            catch { log.append("Delete failed: \(error.localizedDescription)") }
         }
         return log
     }
@@ -74,7 +74,7 @@ public enum SystemCheck {
 
     /// `codesign -dr-` und die wichtigsten Zeilen von `codesign -dv` für ein Bundle/Programm
     public static func signingLines(of url: URL) -> [String] {
-        var l: [String] = ["Code-Signatur: \(url.path)"]
+        var l: [String] = ["Code signature: \(url.path)"]
         let dr = run("/usr/bin/codesign", ["-d", "-r-", url.path]).output
         for line in dr.split(whereSeparator: \.isNewline) where !line.hasPrefix("Executable=") { l.append("   " + line) }
         let dv = run("/usr/bin/codesign", ["-dv", "--verbose=2", url.path]).output
@@ -82,7 +82,7 @@ public enum SystemCheck {
         where ["Identifier=", "Authority=", "Signature=", "CDHash=", "TeamIdentifier=", "Format="].contains(where: { line.hasPrefix($0) }) {
             l.append("   " + line)
         }
-        l.append("   Leaf-Zertifikat SHA-1: " + (leafSHA1(of: url) ?? "– (ad-hoc/unsigniert: TCC-Rechte gelten nur für genau diesen Build)"))
+        l.append("   Leaf certificate SHA-1: " + (leafSHA1(of: url) ?? "– (ad-hoc/unsigned: TCC permissions apply only to exactly this build)"))
         return l
     }
 
@@ -105,18 +105,18 @@ public enum SystemCheck {
     /// Zusammenfassung für die Diagnose (CLI und App)
     public static func diagnosisLines(vid: Int, pid: Int, bundle: URL = Bundle.main.bundleURL) -> [String] {
         var l: [String] = ["— System —"]
-        l.append("IOHIDCheckAccess(ListenEvent): \(Permissions.accessCheck.rawValue)  (gefragt: \(Permissions.askedInputMonitoring ? "ja" : "nein"))")
-        l.append("AXIsProcessTrusted: \(Permissions.accessibility)  (gefragt: \(Permissions.askedAccessibility ? "ja" : "nein"))")
+        l.append("IOHIDCheckAccess(ListenEvent): \(Permissions.accessCheck.rawValue)  (asked: \(Permissions.askedInputMonitoring ? "yes" : "no"))")
+        l.append("AXIsProcessTrusted: \(Permissions.accessibility)  (asked: \(Permissions.askedAccessibility ? "yes" : "no"))")
         l.append(contentsOf: signingLines(of: bundle))
         let others = otherInstances()
-        l.append("Andere TouchBridge-Prozesse: " + (others.isEmpty ? "keine" : others.map { "\($0.name) [\($0.pid)]" }.joined(separator: ", ")))
-        l.append("Alter LaunchAgent \(legacyAgentLabel): " + (legacyAgentFilePresent ? "Datei vorhanden" : "keine Datei")
-                 + (legacyAgentLoaded ? ", geladen" : ", nicht geladen"))
-        l.append("— ioreg: Halter der HID-Schnittstellen (VID \(String(format: "0x%04X", vid)) PID \(String(format: "0x%04X", pid))) —")
+        l.append("Other TouchBridge processes: " + (others.isEmpty ? "none" : others.map { "\($0.name) [\($0.pid)]" }.joined(separator: ", ")))
+        l.append("Old LaunchAgent \(legacyAgentLabel): " + (legacyAgentFilePresent ? "file present" : "no file")
+                 + (legacyAgentLoaded ? ", loaded" : ", not loaded"))
+        l.append("— ioreg: holders of the HID interfaces (VID \(String(format: "0x%04X", vid)) PID \(String(format: "0x%04X", pid))) —")
         let r = holderReport(vid: vid, pid: pid)
         l.append(contentsOf: r.lines(ownPID: getpid()))
         let holders = r.likelyHolders(ownPID: getpid())
-        if !holders.isEmpty { l.append("Mögliche fremde Halter: " + holders.joined(separator: "; ")) }
+        if !holders.isEmpty { l.append("Possible foreign holders: " + holders.joined(separator: "; ")) }
         return l
     }
 }

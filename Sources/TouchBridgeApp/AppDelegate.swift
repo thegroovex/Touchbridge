@@ -70,13 +70,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let now = Permissions.inputMonitoring
             if now != self.hadInputMonitoring {
                 self.hadInputMonitoring = now
-                self.appendLog("🔐 Eingabeüberwachung jetzt: \(Permissions.inputMonitoringState)")
+                self.appendLog("🔐 Input Monitoring now: \(Permissions.inputMonitoringState)")
                 if now { self.restartService() } else { self.updateIcon() }
             }
             let ax = Permissions.accessibility
             if ax != self.hadAccessibility {
                 self.hadAccessibility = ax
-                self.appendLog("🔐 \(PermissionTexts.accessibilityName) jetzt: \(ax ? "erteilt" : "fehlt")")
+                self.appendLog("🔐 \(PermissionTexts.accessibilityName) now: \(ax ? "granted" : "missing")")
                 self.updateIcon()
             }
         }
@@ -118,7 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self.alert(L("No update", "Kein Update"), L("TouchBridge \(Updater.currentVersion) is up to date.", "TouchBridge \(Updater.currentVersion) ist aktuell."))
                 }
             case .failure(let e):
-                self.appendLog("⚠️  Update-Prüfung: \(e.localizedDescription)")
+                self.appendLog("⚠️  Update check: \(e.localizedDescription)")
                 if interactive { self.alert(L("Update check failed", "Update-Prüfung fehlgeschlagen"), e.localizedDescription) }
             }
         }
@@ -706,16 +706,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func runDiagnosis() {
         diagnosing = true
         logLines.removeAll()
-        appendLog("TouchBridge \(AppDelegate.version) – Diagnose \(Date())")
+        appendLog("TouchBridge \(AppDelegate.version) – diagnostics \(Date())")
         appendLog("macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
         for (i, d) in Displays.all().enumerated() {
-            appendLog("[\(i)] \(d.summary) id=\(d.id) @ (\(Int(d.bounds.minX)),\(Int(d.bounds.minY)))" + (d.isBuiltin ? " intern" : " extern"))
+            appendLog("[\(i)] \(d.summary) id=\(d.id) @ (\(Int(d.bounds.minX)),\(Int(d.bounds.minY)))" + (d.isBuiltin ? " built-in" : " external"))
         }
         let tb = CGDisplayBounds(service.targetDisplay)
-        appendLog("Touch-Ziel: id=\(service.targetDisplay) \(Int(tb.width))×\(Int(tb.height)) @ (\(Int(tb.minX)),\(Int(tb.minY)))  Modus: \(settings.mode.title)")
-        appendLog("\(PermissionTexts.accessibilityName): \(Permissions.accessibility)  Eingabeüberwachung: \(Permissions.inputMonitoringState)  Wirkung: \(service.inputMonitoringState.statusText)")
-        appendLog("— Touch-Dienst vor der Diagnose —")
-        appendLog("Status: \(statusText)  Reports bisher: \(service.reportCount)  (\(service.reportSummary))  Quelle: \(service.touchSource.title)")
+        appendLog("Touch target: id=\(service.targetDisplay) \(Int(tb.width))×\(Int(tb.height)) @ (\(Int(tb.minX)),\(Int(tb.minY)))  mode: \(settings.mode.title)")
+        appendLog("\(PermissionTexts.accessibilityName): \(Permissions.accessibility)  Input Monitoring: \(Permissions.inputMonitoringState)  effective: \(service.inputMonitoringState.statusText)")
+        appendLog("— Touch service before diagnostics —")
+        appendLog("Status: \(statusText)  reports so far: \(service.reportCount)  (\(service.reportSummary))  source: \(service.touchSource.title)")
         appendLog(InterfaceStatus.summary(service.status.interfaces) + (service.status.seizeError.map { "  – \($0)" } ?? ""))
         appendLog(service.suppressor.statsLine)
         for l in service.suppressor.samples { appendLog("   " + l) }
@@ -734,10 +734,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self = self else { return }
             self.probe = nil
             let finish = {
-                if let c = ctl { for l in c.probeDetails { self.appendLog(l) } } else { self.appendLog("DDC: kein Bildschirm-Objekt") }
+                if let c = ctl { for l in c.probeDetails { self.appendLog(l) } } else { self.appendLog("DDC: no display object") }
                 self.service.muted = false
-                self.appendLog("— Touch-Dienst nach der Diagnose —")
-                self.appendLog("Reports: \(self.service.reportSummary)  Quelle: \(self.service.touchSource.title)")
+                self.appendLog("— Touch service after diagnostics —")
+                self.appendLog("Reports: \(self.service.reportSummary)  source: \(self.service.touchSource.title)")
                 for l in self.service.openLog.suffix(40) { self.appendLog(l) }
                 self.diagnosing = false
                 self.statusItem.button?.title = ""
@@ -746,12 +746,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(text, forType: .string)
                 let url = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
-                    .appendingPathComponent("TouchBridge-Diagnose.txt")
+                    .appendingPathComponent("TouchBridge-Diagnostics.txt")
                 try? text.write(to: url, atomically: true, encoding: .utf8)
                 let head = summary.interfaces == 0 ? L("No touch interface found.", "Kein Touch-Interface gefunden.")
                     : (summary.reports == 0 ? L("Attention: NO touch reports arrived in 10 s.", "Achtung: In 10 s kamen KEINE Touch-Reports an.")
                                             : L("\(summary.reports) touch reports received.", "\(summary.reports) Touch-Reports empfangen."))
-                self.alert(L("Diagnostics done", "Diagnose fertig"), head + L(" Copied to the clipboard and saved as \"TouchBridge-Diagnose.txt\" on the desktop.", " In die Zwischenablage kopiert und als „TouchBridge-Diagnose.txt“ auf dem Schreibtisch gespeichert."))
+                self.alert(L("Diagnostics done", "Diagnose fertig"), head + L(" Copied to the clipboard and saved as \"TouchBridge-Diagnostics.txt\" on the desktop.", " In die Zwischenablage kopiert und als „TouchBridge-Diagnostics.txt“ auf dem Schreibtisch gespeichert."))
             }
             if let c = ctl { c.probe { _ in finish() } } else { finish() }
         }
@@ -766,12 +766,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.activate(ignoringOtherApps: true)
         let a = NSAlert()
         a.messageText = L("Start multitouch experiments?", "Multitouch-Experimente starten?")
-        a.informativeText = L10n.language == .english ? "TouchBridge tries 5 ways in a row to switch the Anmite into multitouch mode (GetReport, feature reports, direct USB requests like Linux/Android, finally a short USB reconnect).\n\nAfter \"Start\", keep tapping and swiping with 2 fingers on the Anmite for about 40 seconds until \"Experiments done\" appears. No clicks are sent meanwhile.\n\nNothing is written to the vendor channel (read only). The log is copied to the clipboard and saved as \"TouchBridge-MT-Experimente.txt\" on the desktop." : "TouchBridge probiert nacheinander 5 Wege, den Anmite in den Multitouch-Modus zu schalten "
+        a.informativeText = L10n.language == .english ? "TouchBridge tries 5 ways in a row to switch the Anmite into multitouch mode (GetReport, feature reports, direct USB requests like Linux/Android, finally a short USB reconnect).\n\nAfter \"Start\", keep tapping and swiping with 2 fingers on the Anmite for about 40 seconds until \"Experiments done\" appears. No clicks are sent meanwhile.\n\nNothing is written to the vendor channel (read only). The log is copied to the clipboard and saved as \"TouchBridge-MT-Experiments.txt\" on the desktop." : "TouchBridge probiert nacheinander 5 Wege, den Anmite in den Multitouch-Modus zu schalten "
             + "(GetReport, Feature-Reports, direkte USB-Requests wie unter Linux/Android, zuletzt kurzes Neu-Verbinden des Touch-USB).\n\n"
             + "Bitte nach „Start“ ca. 40 Sekunden lang immer wieder mit 2 Fingern auf den Anmite tippen und wischen, "
             + "bis die Meldung „Experimente fertig“ erscheint. Klicks werden währenddessen nicht ausgelöst.\n\n"
             + "Am Vendor-Kanal wird nichts geschrieben (nur gelesen). Das Protokoll landet in der Zwischenablage und als "
-            + "„TouchBridge-MT-Experimente.txt“ auf dem Schreibtisch."
+            + "„TouchBridge-MT-Experiments.txt“ auf dem Schreibtisch."
         a.addButton(withTitle: "Start")
         a.addButton(withTitle: L("Cancel", "Abbrechen"))
         guard a.runModal() == .alertFirstButtonReturn else { return }
@@ -790,7 +790,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
             let url = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("TouchBridge-MT-Experimente.txt")
+                .appendingPathComponent("TouchBridge-MT-Experiments.txt")
             try? text.write(to: url, atomically: true, encoding: .utf8)
             self.alert(L("Experiments done", "Experimente fertig"),
                        (seq.map { L("Multitouch active with \"\($0.title)\" – saved, applied on every connect.", "Multitouch aktiv mit „\($0.title)“ – gespeichert, wird künftig beim Verbinden angewendet.") }

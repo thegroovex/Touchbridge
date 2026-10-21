@@ -3,7 +3,7 @@ import Foundation
 import TouchBridgeCore
 import TouchBridgeKit
 
-// touchbridge – Kommandozeilen-Version (Diagnose, Skripte, Autostart ohne Menüleisten-App).
+// touchbridge – command-line version (diagnostics, scripts, autostart without the menu bar app).
 
 var settings = TouchSettings()
 var listDisplays = false
@@ -22,37 +22,38 @@ func parseInt(_ s: String) -> Int? {
 
 func printUsage() {
     print("""
-    touchbridge – Multitouch für USB-Touchmonitore am Mac
+    touchbridge – multitouch for USB touch monitors on the Mac
 
-      --list-displays        Bildschirme auflisten
-      --display N            Touch auf Bildschirm N abbilden (Standard: erster externer)
-      --dump                 Descriptor + Kontakte ausgeben, keine Events senden
-      --check-update         auf GitHub nach einer neueren Version suchen (inkl. Vorabversionen), dann Ende
-      --diagnose [SEK]       alle HID-Interfaces des Touch-Monitors nicht exklusiv öffnen, Input Mode setzen,
-                             Rohreports protokollieren (Standard 10 s), dann Ende
-      --mt-probe             Multitouch-Experimente (a–e) ausführen, jeweils 3 s auf Report 13 warten
-                             (dabei mit 2 Fingern tippen), dann Ende (Exit 0 = Multitouch gefunden, 6 = nicht)
-      --skip-reenumerate     bei --mt-probe den Schritt d (USB-Neu-Enumeration) auslassen
-      --mt-sequence NAME     Multitouch-Sequenz beim Verbinden anwenden: hid-input-get|hid-feature|
-                             usb-linux-init|usb-interface-linux-init|usb-reenumerate-init
-      --no-seize             Gerät nicht exklusiv öffnen
-      --no-suppress          Systemzeiger-Unterdrückung (Event-Tap, wenn nicht exklusiv) ausschalten
-      --seize-touch-only     nur die Touch-(Digitizer-)Schnittstelle exklusiv, Maus/Vendor nicht (Test)
-      --one-finger-scroll    1-Finger-Ziehen scrollt statt Zeiger/Drag
-      --rotate 0|90|180|270  Panel-Drehung (im Uhrzeigersinn)
-      --swap-xy --flip-x --flip-y   Achsen anpassen
-      --invert-scroll        Scrollrichtung umkehren
-      --scroll-gain F        Scroll-Faktor (Standard 1.0)
-      --vid 0x1234 --pid 0x5678     Bestimmtes Gerät wählen
-      --midi                 MIDI-Modus: virtueller MIDI-Port „TouchBridge“ statt Maus & Gesten
-      --layout mixer|keyboard|performance           MIDI-Layout (Standard: mixer)
-      --no-mpe               ohne MPE, alles auf einem Kanal (--channel)
-      --channel N            MIDI-Kanal 1–16 (ohne MPE; Standard 1)
-      --base-note N          Grundnote für Keyboard/Pads (MIDI-Nummer, Standard 48 = C2)
-      --scale NAME           Keyboard-Skala: chromatic|major|minor|pentatonic|minorPentatonic|dorian|blues
-      --bend-range N         MPE-Pitch-Bend-Bereich in Halbtönen (Standard 48)
-      --brightness N | --contrast N | --volume N    Bildsteuerung per DDC (0–100), dann Ende
-      --get brightness|contrast|volume              Wert per DDC lesen, dann Ende
+      --list-displays        list displays
+      --display N            map touch to display N (default: first external)
+      --dump                 print descriptor + contacts, send no events
+      --check-update         look for a newer version on GitHub (incl. pre-releases), then exit
+      --diagnose [SEC]       open all HID interfaces of the touch monitor non-exclusively, set Input Mode,
+                             log raw reports (default 10 s), then exit
+      --mt-probe             run the multitouch experiments (a–e), waiting 3 s each for report 13
+                             (tap with 2 fingers meanwhile), then exit (exit 0 = multitouch found, 6 = not)
+      --skip-reenumerate     with --mt-probe, skip step d (USB re-enumeration)
+      --mt-sequence NAME     apply a multitouch sequence on connect: hid-input-get|hid-feature|
+                             usb-linux-init|usb-interface-linux-init|usb-reenumerate-init|hid-set-value
+      --no-seize             do not open the device exclusively
+      --no-suppress          turn off system pointer suppression (event tap, when not exclusive)
+      --seize-touch-only     seize only the touch (digitizer) interface, not mouse/vendor (test)
+      --one-finger-scroll    1-finger drag scrolls instead of pointer/drag
+      --key-zoom             pinch sends Cmd +/- instead of the trackpad zoom gesture
+      --rotate 0|90|180|270  panel rotation (clockwise)
+      --swap-xy --flip-x --flip-y   adjust axes
+      --invert-scroll        invert scroll direction
+      --scroll-gain F        scroll factor (default 1.0)
+      --vid 0x1234 --pid 0x5678     choose a specific device
+      --midi                 MIDI mode: virtual MIDI port "TouchBridge" instead of mouse & gestures
+      --layout mixer|keyboard|performance           MIDI layout (default: mixer)
+      --no-mpe               without MPE, everything on one channel (--channel)
+      --channel N            MIDI channel 1–16 (without MPE; default 1)
+      --base-note N          base note for keyboard/pads (MIDI number, default 48 = C2)
+      --scale NAME           keyboard scale: chromatic|major|minor|pentatonic|minorPentatonic|dorian|blues
+      --bend-range N         MPE pitch bend range in semitones (default 48)
+      --brightness N | --contrast N | --volume N    display control via DDC (0–100), then exit
+      --get brightness|contrast|volume              read a value via DDC, then exit
     """)
 }
 
@@ -72,7 +73,7 @@ while !args.isEmpty {
     case "--skip-reenumerate": mtOptions.reenumerate = false
     case "--mt-sequence":
         let v = next()
-        guard MultitouchSequence(rawValue: v) != nil else { print("Unbekannte Sequenz: \(v)"); exit(1) }
+        guard MultitouchSequence(rawValue: v) != nil else { print("Unknown sequence: \(v)"); exit(1) }
         settings.mtSequence = v
     case "--no-seize": settings.seize = false
     case "--no-suppress": settings.suppressSystemPointer = false
@@ -90,20 +91,20 @@ while !args.isEmpty {
     case "--midi": settings.mode = .midi
     case "--layout":
         let v = next()
-        guard let l = MIDILayoutPreset(rawValue: v) else { print("Unbekanntes Layout: \(v) (mixer|keyboard|performance)"); exit(1) }
+        guard let l = MIDILayoutPreset(rawValue: v) else { print("Unknown layout: \(v) (mixer|keyboard|performance)"); exit(1) }
         settings.midiLayout = l
     case "--no-mpe": settings.mpe = false
     case "--channel": settings.midiChannel = max(1, min(16, Int(next()) ?? 1))
     case "--base-note": settings.baseNote = max(0, min(108, Int(next()) ?? 48))
     case "--scale":
         let v = next()
-        guard let sc = Scale(rawValue: v) else { print("Unbekannte Skala: \(v)"); exit(1) }
+        guard let sc = Scale(rawValue: v) else { print("Unknown scale: \(v)"); exit(1) }
         settings.scale = sc
     case "--bend-range": settings.bendRange = max(1, min(96, Int(next()) ?? 48))
     case "--brightness", "--contrast", "--volume": ddcSet.append((String(a.dropFirst(2)), Int(next()) ?? -1))
     case "--get": ddcGet.append(next())
     case "-h", "--help": printUsage(); exit(0)
-    default: print("Unbekannte Option: \(a)"); printUsage(); exit(1)
+    default: print("Unknown option: \(a)"); printUsage(); exit(1)
     }
 }
 
@@ -113,23 +114,23 @@ if let i = displayIndex, i >= 0, i < displays.count { settings.displayID = displ
 if listDisplays {
     for (i, d) in displays.enumerated() {
         print("[\(i)] id=\(d.id) \(d.name) \(Int(d.bounds.width))x\(Int(d.bounds.height)) @ (\(Int(d.bounds.minX)),\(Int(d.bounds.minY)))"
-              + (d.isBuiltin ? " intern" : " extern") + (d.isMain ? " (Hauptbildschirm)" : ""))
+              + (d.isBuiltin ? " built-in" : " external") + (d.isMain ? " (main display)" : ""))
     }
     exit(0)
 }
 
 if checkUpdate {
     let cur = Updater.currentVersion
-    print("Installiert: \(cur)")
+    print("Installed: \(cur)")
     Updater().check(includePrereleases: true, skipped: nil, current: cur) { r in
         switch r {
         case .success(let rel?):
-            print("Update verfügbar: \(rel.versionString)" + (rel.prerelease ? " (Vorabversion)" : ""))
+            print("Update available: \(rel.versionString)" + (rel.prerelease ? " (pre-release)" : ""))
             if let a = UpdateLogic.dmgAsset(rel) { print("DMG: \(a.browserDownloadURL)") }
             if let h = rel.htmlURL { print("Release: \(h)") }
-            print("Installieren: Menüleiste › Updates › Nach Updates suchen …")
+            print("To install: menu bar › Updates › Check for updates …")
             exit(0)
-        case .success(nil): print("Kein Update – aktuell."); exit(0)
+        case .success(nil): print("No update – up to date."); exit(0)
         case .failure(let e): print("❌ \(e.localizedDescription)"); exit(1)
         }
     }
@@ -137,7 +138,7 @@ if checkUpdate {
 }
 
 if let secs = diagnoseSeconds {
-    print("Eingabeüberwachung: \(Permissions.inputMonitoringState)")
+    print("Input Monitoring: \(Permissions.inputMonitoringState)")
     if !Permissions.inputMonitoring { Permissions.requestInputMonitoring() }
     for l in SystemCheck.diagnosisLines(vid: settings.vid ?? HIDProbe.anmiteVID, pid: settings.pid ?? HIDProbe.anmitePID,
                                         bundle: URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()) { print(l) }
@@ -147,21 +148,21 @@ if let secs = diagnoseSeconds {
 }
 
 if mtProbe {
-    print("Eingabeüberwachung: \(Permissions.inputMonitoringState)")
+    print("Input Monitoring: \(Permissions.inputMonitoringState)")
     if !Permissions.inputMonitoring { Permissions.requestInputMonitoring() }
     let svc = TouchService(settings: settings)
     svc.log = { print($0) }
     svc.start()
-    guard svc.status.running else { print("❌ Touch-Dienst startet nicht"); exit(2) }
+    guard svc.status.running else { print("❌ Touch service does not start"); exit(2) }
     svc.muted = true
-    print("Gleich geht es los: bitte ca. 40 s lang immer wieder mit 2 Fingern auf den Anmite tippen/wischen.")
+    print("Starting shortly: please keep tapping/swiping with 2 fingers on the Anmite for about 40 s.")
     var experiment: MultitouchExperiment?
     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
         let e = MultitouchExperiment(service: svc, options: mtOptions) { print($0) }
         experiment = e
         e.run { seq in
             if let seq = seq {
-                print("Sequenz: \(seq.rawValue) – in der App wird sie über das Menü gespeichert; im CLI: --mt-sequence \(seq.rawValue)")
+                print("Sequence: \(seq.rawValue) – the app saves it via the menu; in the CLI use: --mt-sequence \(seq.rawValue)")
             }
             svc.stop()
             exit(seq == nil ? 6 : 0)
@@ -174,7 +175,7 @@ if mtProbe {
 if !ddcGet.isEmpty || !ddcSet.isEmpty {
     let ctl = DisplayControl(display: Displays.resolve(settings.displayID))
     guard ctl.hasDDC else {
-        print("❌ Bildschirm antwortet nicht auf DDC (oder Intel-Mac: dort noch nicht unterstützt).")
+        print("❌ Display does not respond to DDC (or Intel Mac: not supported there yet).")
         for l in ctl.probeDetails { print("   " + l) }
         exit(3)
     }
@@ -183,14 +184,14 @@ if !ddcGet.isEmpty || !ddcSet.isEmpty {
     }
     var pending = ddcGet.count
     for (name, v) in ddcSet {
-        guard let f = feature(name), (0...100).contains(v) else { print("Ungültig: --\(name) \(v)"); exit(1) }
+        guard let f = feature(name), (0...100).contains(v) else { print("Invalid: --\(name) \(v)"); exit(1) }
         ctl.set(f, percent: v)
         print("\(f.title) -> \(v) %")
     }
     for name in ddcGet {
-        guard let f = feature(name) else { print("Unbekannt: \(name)"); exit(1) }
+        guard let f = feature(name) else { print("Unknown: \(name)"); exit(1) }
         ctl.read(f) { v in
-            print("\(f.title): " + (v.map { "\($0) %" } ?? "nicht unterstützt"))
+            print("\(f.title): " + (v.map { "\($0) %" } ?? "not supported"))
             pending -= 1
             if pending == 0 { exit(0) }
         }
@@ -204,31 +205,31 @@ service.dumpMode = dump
 if !dump && settings.mode == .gestures {
     Permissions.requestAccessibility()
     if !Permissions.accessibility {
-        print("⚠️  Bitte unter " + PermissionTexts.accessibilityPath + " Zugriff geben und neu starten.")
+        print("⚠️  Please grant access under " + PermissionTexts.accessibilityPath + " and restart.")
     }
 }
 if !Permissions.inputMonitoring {
     Permissions.requestInputMonitoring()
-    print("⚠️  Ggf. unter Datenschutz & Sicherheit › Eingabeüberwachung Zugriff erlauben und neu starten.")
+    print("⚠️  If needed, allow access under Privacy & Security › Input Monitoring and restart.")
 }
 service.start()
 guard service.status.running else { exit(2) }
 let b = CGDisplayBounds(service.targetDisplay)
-print("🖥  Ziel-Bildschirm: \(Int(b.width))x\(Int(b.height)) @ (\(Int(b.minX)),\(Int(b.minY)))")
+print("🖥  Target display: \(Int(b.width))x\(Int(b.height)) @ (\(Int(b.minX)),\(Int(b.minY)))")
 if settings.mode == .midi && !dump {
-    print("🎛  MIDI-Modus – Layout \(settings.midiLayout.title), " + (settings.mpe ? "MPE" : "Kanal \(settings.midiChannel)")
-          + ", MIDI-Port „TouchBridge“.")
+    print("🎛  MIDI mode – layout \(settings.midiLayout.title), " + (settings.mpe ? "MPE" : "channel \(settings.midiChannel)")
+          + ", MIDI port \"TouchBridge\".")
     for (i, z) in settings.midiLayoutModel.zones.enumerated() {
         print(String(format: "   [%2d] %@  x %.2f–%.2f  y %.2f–%.2f", i, z.name, z.rect.x, z.rect.maxX, z.rect.y, z.rect.maxY))
     }
 }
-print(dump ? "Dump-Modus – berühre den Bildschirm. Ctrl+C beendet." : "Läuft. Ctrl+C beendet.")
-// Ctrl+C: klingende Noten beenden, bevor der Prozess (und damit der MIDI-Port) verschwindet
+print(dump ? "Dump mode – touch the screen. Ctrl+C quits." : "Running. Ctrl+C quits.")
+// Ctrl+C: end sounding notes before the process (and with it the MIDI port) goes away
 var signalSources: [DispatchSourceSignal] = []
 for sig in [SIGINT, SIGTERM, SIGHUP] {
     signal(sig, SIG_IGN)
     let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
-    src.setEventHandler { service.stop(); exit(0) }   // Gerät freigeben (Seize lösen)
+    src.setEventHandler { service.stop(); exit(0) }   // release the device (undo seize)
     src.resume()
     signalSources.append(src)
 }

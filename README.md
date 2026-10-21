@@ -95,7 +95,7 @@ Wi-Fi is only needed for this setup. Afterwards the bridge works anywhere, over 
    curl -fsSL https://raw.githubusercontent.com/thegroovex/Touchbridge/main/scripts/pi/install-bt-bridge.sh | sudo bash
    ```
    It installs everything and starts the bridge automatically on every boot.
-3. If the installer says **"Bitte einmal neu starten"** (please reboot), run `sudo reboot` and log in again after a minute.
+3. If the installer says **"Please reboot once"**, run `sudo reboot` and log in again after a minute.
 
 ### Step 3 – Connect everything
 
@@ -165,13 +165,13 @@ Menu › **Picture**: brightness, contrast and volume of the monitor via DDC (Ap
 |---|---|
 | Menu says nothing is connected | Check the cable, then Menu › Permissions – both permissions must be allowed. After an update you may need to remove TouchBridge from both permission lists with "–" and add it again (or Menu › Permissions › Reset permissions). |
 | Touch lands on the wrong screen or rotated | Menu › Touch › Screen / Orientation |
-| Multitouch: nothing happens | Is there a picture on the monitor? Is "Anmite Touch (TouchBridge)" connected in Bluetooth settings? On the Pi run `journalctl -u touchbridge-bt -f` – you should see "Lese Touch-Reports" and one line per touch. |
+| Multitouch: nothing happens | Is there a picture on the monitor? Is "Anmite Touch (TouchBridge)" connected in Bluetooth settings? On the Pi run `journalctl -u touchbridge-bt -f` – you should see "Reading touch reports" and one line per touch. |
 | Multitouch stops for a while, then works again | Usually USB trouble between monitor and Pi. Run the installer again (it sets a USB stability fix) and reboot the Pi, or connect the monitor to the Pi without a hub. |
 | `ssh: Could not resolve hostname anmite-pi.local` | Wait a bit longer after the first boot, check the Wi-Fi settings in Raspberry Pi Imager, or use the Pi's IP address from your router. |
 | Bluetooth device does not appear on the Mac | On the Pi: `sudo systemctl restart bluetooth touchbridge-bt`, then look again. To pair from scratch, remove the device on the Mac first. |
 
 For a detailed report: Menu › **Record diagnostics** (touch the screen for 10 s). The result is copied to the
-clipboard and saved as `TouchBridge-Diagnose.txt` on your desktop – attach it to an
+clipboard and saved as `TouchBridge-Diagnostics.txt` on your desktop – attach it to an
 [issue](https://github.com/thegroovex/Touchbridge/issues).
 
 ## Command line

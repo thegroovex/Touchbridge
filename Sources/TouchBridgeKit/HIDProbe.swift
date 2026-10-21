@@ -24,18 +24,18 @@ public enum HIDReturn {
         let name: String
         switch rc {
         case kIOReturnSuccess: name = "OK"
-        case notPermitted: name = "kIOReturnNotPermitted – keine Berechtigung (Eingabeüberwachung?)"
-        case notPrivileged: name = "kIOReturnNotPrivileged – Root/Berechtigung nötig"
-        case exclusiveAccess: name = "kIOReturnExclusiveAccess – Gerät von anderem Prozess/Treiber exklusiv belegt"
-        case unsupported: name = "kIOReturnUnsupported – vom Gerät nicht unterstützt"
+        case notPermitted: name = "kIOReturnNotPermitted – no permission (Input Monitoring?)"
+        case notPrivileged: name = "kIOReturnNotPrivileged – root/permission required"
+        case exclusiveAccess: name = "kIOReturnExclusiveAccess – device held exclusively by another process/driver"
+        case unsupported: name = "kIOReturnUnsupported – not supported by the device"
         case noDevice: name = "kIOReturnNoDevice"
         case notOpen: name = "kIOReturnNotOpen"
-        case timeout: name = "kIOReturnTimeout – Gerät antwortet nicht"
+        case timeout: name = "kIOReturnTimeout – device not responding"
         case badArgument: name = "kIOReturnBadArgument"
         case error: name = "kIOReturnError"
         case noResources: name = "kIOReturnNoResources"
         case overrun: name = "kIOReturnOverrun"
-        default: name = "unbekannt"
+        default: name = "unknown"
         }
         return "\(hex) (\(name))"
     }
@@ -59,18 +59,18 @@ public enum HIDFeature {
     public static func describeGet(_ device: IOHIDDevice, descriptor d: HIDDescriptor, reportID: UInt8, what: String) -> String {
         let size = d.featureReportLength(reportID)
         let a = get(device, reportID: reportID, size: size)
-        return String(format: "   GetReport Feature 0x%02X %@ (Puffer %d): ", reportID, what, size) + HIDReturn.describe(a.rc)
-            + (a.bytes.isEmpty ? "" : " [\(hex(a.bytes))] (\(a.bytes.count) Bytes)")
+        return String(format: "   GetReport Feature 0x%02X %@ (buffer %d): ", reportID, what, size) + HIDReturn.describe(a.rc)
+            + (a.bytes.isEmpty ? "" : " [\(hex(a.bytes))] (\(a.bytes.count) bytes)")
     }
 
     /// Einen Multitouch-Aktivierungsversuch ausführen (GetReports vorher, SetReport, Input Mode nachher lesen).
     @discardableResult
     public static func apply(_ step: MultitouchActivationStep, device: IOHIDDevice, descriptor d: HIDDescriptor,
                              log: (String) -> Void) -> IOReturn {
-        for r in step.readFirst { log(describeGet(device, descriptor: d, reportID: r, what: "vorher")) }
+        for r in step.readFirst { log(describeGet(device, descriptor: d, reportID: r, what: "before")) }
         let rc = set(device, reportID: step.reportID, bytes: step.bytes)
         log(String(format: "   SetReport Feature 0x%02X [%@]: ", step.reportID, step.hex) + HIDReturn.describe(rc))
-        log(describeGet(device, descriptor: d, reportID: step.reportID, what: "nachher"))
+        log(describeGet(device, descriptor: d, reportID: step.reportID, what: "after"))
         return rc
     }
 
@@ -85,7 +85,7 @@ public enum HIDFeature {
     public static func applyInputMode(_ device: IOHIDDevice, descriptor d: HIDDescriptor, name: String,
                                       log: (String) -> Void) -> IOReturn? {
         guard let im = d.inputModeReport(mode: 2) else {
-            log("   Input Mode: kein Feature 0x0D/0x52 im Descriptor – nichts zu setzen")
+            log("   Input Mode: no feature 0x0D/0x52 in descriptor – nothing to set")
             return nil
         }
         let ccm = d.contactCountMaximumField?.reportID
@@ -94,11 +94,11 @@ public enum HIDFeature {
             if let c = ccm { log(describeGet(device, descriptor: d, reportID: c, what: "Contact Count Max (\(when))")) }
             log(describeGet(device, descriptor: d, reportID: im.reportID, what: "Input Mode (\(when))"))
         }
-        dumpFeatures("vorher")
+        dumpFeatures("before")
         let rc = set(device, reportID: im.reportID, bytes: im.bytes)
         log(String(format: "   SetReport Feature 0x%02X [%@] (Input Mode 2 = Multi-Touch, Device Index 0): ", im.reportID, hex(im.bytes))
             + HIDReturn.describe(rc))
-        dumpFeatures("nachher")
+        dumpFeatures("after")
         return rc
     }
 }
@@ -164,8 +164,8 @@ public final class HIDProbe {
 
     /// Startet die Diagnose; nach `seconds` wird `completion` auf dem Main-Thread aufgerufen und alles geschlossen.
     public func run(seconds: Double = 10, completion: @escaping (Summary) -> Void) {
-        log("— HID-Diagnose (nicht exklusiv, nur Lesen) —")
-        log("Eingabeüberwachung: \(Permissions.inputMonitoringState)")
+        log("— HID diagnostics (non-exclusive, read-only) —")
+        log("Input Monitoring: \(Permissions.inputMonitoringState)")
         // Manager nur zum Aufzählen; jedes Interface wird einzeln ohne Seize geöffnet und eingeplant.
         let m = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
         manager = m
@@ -175,11 +175,11 @@ public final class HIDProbe {
         if let p = pid { match[kIOHIDProductIDKey] = p }
         var devs = copyDevices(match)
         if devs.isEmpty {
-            log(String(format: "Keine HID-Interfaces mit VID 0x%04X / PID 0x%04X gefunden – suche alle Digitizer (Page 0x0D).",
+            log(String(format: "No HID interfaces with VID 0x%04X / PID 0x%04X found – searching all digitizers (page 0x0D).",
                        vid ?? 0, pid ?? 0))
             devs = copyDevices([kIOHIDDeviceUsagePageKey: Int(Usage.pageDigitizer)])
         }
-        log("Gefundene HID-Interfaces: \(devs.count)")
+        log("HID interfaces found: \(devs.count)")
 
         // ein IOHIDDevice-Objekt pro Interface (prozessweit), doppelte Treffer verwerfen
         var seen = Set<UInt64>()
@@ -210,20 +210,20 @@ public final class HIDProbe {
                 // Touch-Dienst hält das Interface: nicht neu öffnen, nur zusätzlich beobachten
                 iface.sharedWithService = true
                 iface.openRC = kIOReturnSuccess
-                log("   bereits vom Touch-Dienst geöffnet (" + (HIDOpenRegistry.shared.tracker.isExclusive(HIDOpenRegistry.registryID(d) ?? 0) ? "exklusiv" : "nicht exklusiv")
-                    + ") – Diagnose beobachtet mit")
+                log("   already opened by the touch service (" + (HIDOpenRegistry.shared.tracker.isExclusive(HIDOpenRegistry.registryID(d) ?? 0) ? "exclusive" : "non-exclusive")
+                    + ") – diagnostics observes alongside")
             } else {
                 iface.openRC = HIDOpenRegistry.shared.open(d, seize: false)
-                log("   IOHIDDeviceOpen (ohne Seize): " + HIDReturn.describe(iface.openRC))
+                log("   IOHIDDeviceOpen (without seize): " + HIDReturn.describe(iface.openRC))
             }
 
             if let data = Self.prop(d, kIOHIDReportDescriptorKey) as? Data {
                 let desc = HIDDescriptor(bytes: [UInt8](data))
-                log("   Descriptor \(data.count) Bytes: " + HIDFeature.hex([UInt8](data)))
+                log("   Descriptor \(data.count) bytes: " + HIDFeature.hex([UInt8](data)))
                 let asm = TouchFrameAssembler(descriptor: desc, pointerFallback: true)
                 for (rid, l) in asm.layouts.sorted(by: { $0.key < $1.key }) {
-                    log(l.isPointer ? "   Report \(rid): Absolutmaus (X/Y absolut, Button 1) – Single-Touch-Quelle"
-                        : "   Touch-Report \(rid): \(l.fingers.count) Finger-Slots, Contact Count: \(l.contactCount != nil ? "ja" : "nein")")
+                    log(l.isPointer ? "   Report \(rid): absolute mouse (X/Y absolute, button 1) – single-touch source"
+                        : "   Touch report \(rid): \(l.fingers.count) finger slots, contact count: \(l.contactCount != nil ? "yes" : "no")")
                 }
                 if !asm.layouts.isEmpty { iface.assembler = asm }
                 if iface.sharedWithService {
@@ -235,7 +235,7 @@ public final class HIDProbe {
                     iface.inputModeRC = HIDFeature.applyInputMode(d, descriptor: desc, name: "IF \(i)") { [weak self] in self?.log($0) }
                 }
             } else {
-                log("   (kein Report-Descriptor lesbar)")
+                log("   (no readable report descriptor)")
             }
 
             // Reports + Werte über den prozessweiten Hub (eine IOKit-Registrierung je Gerät, gemeinsam mit dem Touch-Dienst)
@@ -247,7 +247,7 @@ public final class HIDProbe {
             }
             interfaces.append(iface)
         }
-        log("Warte \(Int(seconds)) s auf Reports – bitte den Bildschirm mit mehreren Fingern berühren …")
+        log("Waiting \(Int(seconds)) s for reports – please touch the screen with several fingers …")
 
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [self] in
             completion(finish())
@@ -259,7 +259,7 @@ public final class HIDProbe {
         guard f.valuesLogged < maxLinesPerInterface else { return }
         f.valuesLogged += 1
         let e = IOHIDValueGetElement(v)
-        log(String(format: "[IF %d] Wert #%d page 0x%02X usage 0x%02X = %ld", f.index, f.values,
+        log(String(format: "[IF %d] value #%d page 0x%02X usage 0x%02X = %ld", f.index, f.values,
                    IOHIDElementGetUsagePage(e), IOHIDElementGetUsage(e), IOHIDValueGetIntegerValue(v)))
     }
 
@@ -271,7 +271,7 @@ public final class HIDProbe {
             f.assembler = a
             if let fr = fr {
                 f.frames += 1
-                frameText = fr.contacts.isEmpty ? "  -> 0 Finger"
+                frameText = fr.contacts.isEmpty ? "  -> 0 fingers"
                     : "  -> " + fr.contacts.map { "#\($0.id)(\($0.x),\($0.y))" }.joined(separator: " ")
             }
         }
@@ -286,23 +286,23 @@ public final class HIDProbe {
         var s = Summary()
         s.interfaces = interfaces.count
         s.reports = interfaces.reduce(0) { $0 + $1.count }
-        s.lines.append("— Ergebnis HID-Diagnose —")
-        s.lines.append("Eingabeüberwachung: \(Permissions.inputMonitoringState)")
+        s.lines.append("— HID diagnostics result —")
+        s.lines.append("Input Monitoring: \(Permissions.inputMonitoringState)")
         for f in interfaces {
             s.lines.append("[IF \(f.index)] Open: " + HIDReturn.describe(f.openRC)
                            + "  SetReport Input Mode: " + (f.inputModeRC.map(HIDReturn.describe) ?? "–")
-                           + "  Reports: \(f.count)  Werte: \(f.values)  Touch-Frames: \(f.frames)")
+                           + "  Reports: \(f.count)  values: \(f.values)  touch frames: \(f.frames)")
         }
-        s.lines.append("Empfangene Reports gesamt: \(s.reports)")
+        s.lines.append("Total reports received: \(s.reports)")
         if s.interfaces == 0 {
-            s.lines.append("⚠️  KEIN passendes HID-Interface gefunden (Kabel/USB-C-Port prüfen, Touch-USB muss verbunden sein).")
+            s.lines.append("⚠️  NO matching HID interface found (check cable/USB-C port; the touch USB must be connected).")
         } else if s.reports == 0 {
-            s.lines.append("⚠️  KEINE Reports in der Messzeit empfangen – Touch-Daten kommen bei TouchBridge nicht an.")
+            s.lines.append("⚠️  NO reports received during the measurement – touch data is not reaching TouchBridge.")
             if !Permissions.inputMonitoring {
-                s.lines.append("   → Eingabeüberwachung fehlt: Systemeinstellungen › Datenschutz & Sicherheit › Eingabeüberwachung, TouchBridge erlauben, App neu starten.")
+                s.lines.append("   → Input Monitoring missing: System Settings › Privacy & Security › Input Monitoring, allow TouchBridge, restart the app.")
             } else {
-                s.lines.append("   → Berechtigung ist erteilt. Mögliche Ursachen: Controller sendet erst nach passendem Input Mode,")
-                s.lines.append("     ein anderer Treiber/Prozess belegt das Gerät exklusiv, oder die Daten laufen über ein anderes Interface.")
+                s.lines.append("   → Permission is granted. Possible causes: the controller only sends after the right Input Mode,")
+                s.lines.append("     another driver/process holds the device exclusively, or the data arrives on a different interface.")
             }
         }
         for l in s.lines { log(l) }

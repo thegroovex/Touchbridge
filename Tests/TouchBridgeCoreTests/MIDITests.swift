@@ -26,7 +26,7 @@ final class MIDILayoutTests: XCTestCase {
         let p = MIDILayoutPreset.performance.build()
         XCTAssertEqual(p.zones.count, 13)
         XCTAssertEqual(p.hitTest(0.7, 0.3), 4)
-        if case .xy = p.zones[4].kind {} else { XCTFail("Zone 4 sollte XY sein") }
+        if case .xy = p.zones[4].kind {} else { XCTFail("zone 4 should be XY") }
         XCTAssertEqual(p.hitTest(0.05, 0.3), 0)
         XCTAssertEqual(p.hitTest(0.05, 0.8), 5)
         let k = MIDILayoutPreset.keyboard.build(baseNote: 48)

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""TouchBridge Pi-Brücke: Anmite-Multitouch (USB, Linux hid-multitouch) -> Bluetooth-HID -> Mac.
+"""TouchBridge Pi bridge: Anmite multitouch (USB, Linux hid-multitouch) -> Bluetooth HID -> Mac.
 
-Der Pi meldet sich per Bluetooth als HID-Touchscreen mit derselben VID/PID (0x27C0/0x0859) und demselben
-Report-Descriptor wie die Touch-Schnittstelle des Anmite. Die rohen Reports (Report 13, 10 Finger) werden
-unverändert von /dev/hidrawN weitergereicht. TouchBridge am Mac erkennt das Gerät dadurch wie das echte Anmite.
+The Pi presents itself over Bluetooth as an HID touchscreen with the same VID/PID (0x27C0/0x0859) and the same
+report descriptor as the Anmite's touch interface. The raw reports (report 13, 10 fingers) are forwarded
+unchanged from /dev/hidrawN, so TouchBridge on the Mac recognises the device just like the real Anmite.
 
-Linux (hid-multitouch) schaltet den Controller beim Einstecken selbst in den Multitouch-Modus – darum bleibt der
-Kernel-Treiber gebunden; wir lesen nur parallel über hidraw.
+Linux (hid-multitouch) switches the controller into multitouch mode by itself when plugged in – so the kernel
+driver stays bound; we only read in parallel via hidraw.
 """
 import fcntl, glob, json, os, select, socket, struct, sys, threading, time
 
@@ -23,7 +23,7 @@ PROFILE_UUID = "00001124-0000-1000-8000-00805f9b34fb"  # HID
 AGENT_PATH = "/touchbridge/agent"
 PROFILE_PATH = "/touchbridge/profile"
 
-# Fallback-Descriptor (aus der macOS-Diagnose rekonstruiert), falls das Anmite beim Start nicht angeschlossen ist
+# Fallback descriptor (reconstructed from the macOS diagnostics) in case the Anmite is not connected at startup
 def _fallback_descriptor():
     h = lambda s: bytes.fromhex(s.replace(" ", ""))
     finger = ("09 22 A1 02 09 42 15 00 25 01 75 01 95 01 81 02 95 03 81 01 09 51 75 04 25 0F 95 01 81 02 05 01 26 FF 3F"
@@ -39,7 +39,7 @@ def log(*a):
 # ---------------------------------------------------------------- Anmite (hidraw)
 
 def find_hidraw():
-    """hidraw der Touch-Schnittstelle (Interface 0, Digitizer) des Anmite"""
+    """hidraw of the Anmite touch interface (interface 0, digitizer)"""
     for h in sorted(glob.glob("/sys/class/hidraw/hidraw*")):
         try:
             ue = open(os.path.join(h, "device/uevent")).read().upper()
@@ -61,12 +61,12 @@ def load_descriptor():
         os.makedirs(STATE_DIR, exist_ok=True)
         if not os.path.exists(DESC_CACHE) or open(DESC_CACHE, "rb").read() != desc:
             open(DESC_CACHE, "wb").write(desc)
-        log(f"Descriptor vom Anmite gelesen ({len(desc)} Bytes)")
+        log(f"Descriptor read from the Anmite ({len(desc)} bytes)")
         return desc
     if os.path.exists(DESC_CACHE):
-        log("Anmite nicht angeschlossen – nutze gespeicherten Descriptor")
+        log("Anmite not connected – using saved descriptor")
         return open(DESC_CACHE, "rb").read()
-    log("Anmite nicht angeschlossen – nutze eingebauten Descriptor")
+    log("Anmite not connected – using built-in descriptor")
     return _fallback_descriptor()
 
 # ---------------------------------------------------------------- SDP-Record
@@ -86,7 +86,7 @@ def sdp_record(desc: bytes) -> str:
     <sequence><uuid value="0x0100" /><uint16 value="0x0013" /></sequence>
     <sequence><uuid value="0x0011" /></sequence></sequence></sequence></attribute>
   <attribute id="0x0100"><text value="{NAME}" /></attribute>
-  <attribute id="0x0101"><text value="Multitouch-Brücke" /></attribute>
+  <attribute id="0x0101"><text value="Multitouch bridge" /></attribute>
   <attribute id="0x0102"><text value="groovex" /></attribute>
   <attribute id="0x0200"><uint16 value="0x0100" /></attribute>
   <attribute id="0x0201"><uint16 value="0x0111" /></attribute>
@@ -104,18 +104,18 @@ def sdp_record(desc: bytes) -> str:
   <attribute id="0x0210"><uint16 value="0x0320" /></attribute>
 </record>"""
 
-# ---------------------------------------------------------------- BlueZ: Profil + Agent
+# ---------------------------------------------------------------- BlueZ: profile + agent
 
 class Profile(dbus.service.Object):
     @dbus.service.method("org.bluez.Profile1", in_signature="", out_signature="")
     def Release(self): pass
     @dbus.service.method("org.bluez.Profile1", in_signature="oha{sv}", out_signature="")
-    def NewConnection(self, path, fd, props): os.close(fd.take())  # wir nehmen L2CAP direkt an
+    def NewConnection(self, path, fd, props): os.close(fd.take())  # we accept L2CAP directly
     @dbus.service.method("org.bluez.Profile1", in_signature="o", out_signature="")
     def RequestDisconnection(self, path): pass
 
 class Agent(dbus.service.Object):
-    """Koppeln ohne Eingabe (NoInputNoOutput): alles bestätigen und das Gerät vertrauen"""
+    """Pairing without input (NoInputNoOutput): confirm everything and trust the device"""
     def __init__(self, bus, path):
         super().__init__(bus, path); self.bus = bus
     def _trust(self, dev):
@@ -123,7 +123,7 @@ class Agent(dbus.service.Object):
             dbus.Interface(self.bus.get_object("org.bluez", dev), "org.freedesktop.DBus.Properties").Set(
                 "org.bluez.Device1", "Trusted", dbus.Boolean(True))
         except Exception as e:
-            log("Trust fehlgeschlagen:", e)
+            log("Trust failed:", e)
     @dbus.service.method("org.bluez.Agent1", in_signature="", out_signature="")
     def Release(self): pass
     @dbus.service.method("org.bluez.Agent1", in_signature="os", out_signature="")
@@ -131,7 +131,7 @@ class Agent(dbus.service.Object):
     @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="")
     def RequestAuthorization(self, dev): self._trust(dev)
     @dbus.service.method("org.bluez.Agent1", in_signature="ou", out_signature="")
-    def RequestConfirmation(self, dev, passkey): log(f"Koppeln bestätigt ({passkey:06d})"); self._trust(dev)
+    def RequestConfirmation(self, dev, passkey): log(f"Pairing confirmed ({passkey:06d})"); self._trust(dev)
     @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="s")
     def RequestPinCode(self, dev): return "0000"
     @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="u")
@@ -159,7 +159,7 @@ def setup_bluez(desc):
             props.Set("org.bluez.Adapter1", k, v if not isinstance(v, bool) else dbus.Boolean(v))
         except Exception as e:
             log(f"Adapter {k}: {e}")
-    log("Bluetooth bereit: sichtbar als", repr(NAME))
+    log("Bluetooth ready: visible as", repr(NAME))
     return bus
 
 # ---------------------------------------------------------------- Bridge
@@ -171,7 +171,7 @@ class Bridge:
         self.host = None
         self.feature_mode = bytes([0x21, 0x02, 0x00])
 
-    # --- Verbindungen
+    # --- connections
     def listen(self):
         def srv(psm):
             s = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP)
@@ -185,9 +185,9 @@ class Bridge:
     def _accept_loop(self):
         while True:
             c, addr = self.sc.accept()
-            log("Control-Kanal verbunden:", addr[0])
+            log("Control channel connected:", addr[0])
             i, addr2 = self.si.accept()
-            log("Interrupt-Kanal verbunden:", addr2[0])
+            log("Interrupt channel connected:", addr2[0])
             self._set_connection(c, i, addr[0])
 
     def _set_connection(self, c, i, host):
@@ -195,7 +195,7 @@ class Bridge:
             self._close_locked()
             self.ctrl, self.intr, self.host = c, i, host
             try:
-                i.settimeout(1.0)   # Senden darf den Touch-Lesethread nie dauerhaft blockieren
+                i.settimeout(1.0)   # sending must never block the touch reader thread for long
             except OSError:
                 pass
         try:
@@ -216,11 +216,11 @@ class Bridge:
     def disconnect(self, why):
         with self.lock:
             if self.ctrl:
-                log("Verbindung getrennt:", why)
+                log("Connection closed:", why)
             self._close_locked()
 
     def _reconnect_loop(self):
-        """Verbindet sich selbst mit dem zuletzt gekoppelten Mac (z. B. nach Neustart des Pi)"""
+        """Reconnects by itself to the last paired Mac (e.g. after the Pi reboots)"""
         while True:
             time.sleep(5)
             if self.ctrl:
@@ -235,12 +235,12 @@ class Bridge:
                 i = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP)
                 i.settimeout(5); i.connect((host, PSM_INTR))
                 c.settimeout(None); i.settimeout(None)
-                log("Mit Mac neu verbunden:", host)
+                log("Reconnected to Mac:", host)
                 self._set_connection(c, i, host)
             except OSError:
                 time.sleep(10)
 
-    # --- HID-Control-Kanal (GET/SET_REPORT, SET_PROTOCOL, …)
+    # --- HID control channel (GET/SET_REPORT, SET_PROTOCOL, …)
     def _control_loop(self, c):
         while True:
             try:
@@ -249,7 +249,7 @@ class Bridge:
                 p = b""
             if not p:
                 if c is self.ctrl:
-                    self.disconnect("Control-Kanal geschlossen")
+                    self.disconnect("control channel closed")
                 return
             t, param = p[0] >> 4, p[0] & 0x0F
             try:
@@ -272,7 +272,7 @@ class Bridge:
                 elif t == 0x8:  # GET_IDLE
                     c.send(bytes([0xA0, 0x00]))
                 elif t == 0x1 and param == 0x5:  # HID_CONTROL VIRTUAL_CABLE_UNPLUG
-                    self.disconnect("Mac hat entkoppelt")
+                    self.disconnect("Mac unpaired")
                     try: os.remove(HOST_FILE)
                     except OSError: pass
                     return
@@ -287,24 +287,24 @@ class Bridge:
         try:
             s.send(b"\xA1" + report)
         except OSError as e:
-            self.disconnect(f"Senden fehlgeschlagen ({e})")
+            self.disconnect(f"send failed ({e})")
 
-    # --- Anmite lesen
+    # --- read the Anmite
     def touch_loop(self):
         last_missing = 0.0
         while True:
             path, _ = find_hidraw()
             if not path:
                 if time.time() - last_missing > 60:
-                    log("Anmite (Touch) nicht gefunden – Bild per HDMI anschließen und Touch-USB-C einstecken …")
+                    log("Anmite (touch) not found – connect the picture via HDMI and plug in the touch USB-C …")
                     last_missing = time.time()
                 time.sleep(1)
                 continue
-            log("Lese Touch-Reports von", path)
+            log("Reading touch reports from", path)
             try:
                 fd = os.open(path, os.O_RDONLY)
             except OSError as e:
-                log("Öffnen fehlgeschlagen:", e); time.sleep(2); continue
+                log("Open failed:", e); time.sleep(2); continue
             n = 0
             burst, burst_start, last_rx = 0, 0.0, 0.0
             try:
@@ -312,8 +312,8 @@ class Bridge:
                     r, _, _ = select.select([fd], [], [], 5)
                     now = time.time()
                     if burst and now - last_rx > 2:
-                        log(f"Berührung: {burst} Reports in {last_rx - burst_start:.1f} s"
-                            + ("" if self.intr else " – kein Mac verbunden, nicht gesendet"))
+                        log(f"Touch: {burst} reports in {last_rx - burst_start:.1f} s"
+                            + ("" if self.intr else " – no Mac connected, not sent"))
                         burst = 0
                     if not r:
                         continue
@@ -328,9 +328,9 @@ class Bridge:
                         self.send_report(data)
                         n += 1
                         if n == 1:
-                            log("Erster Multitouch-Report empfangen" + (" – wird an den Mac gesendet" if self.intr else " (noch kein Mac verbunden)"))
+                            log("First multitouch report received" + (" – sending to the Mac" if self.intr else " (no Mac connected yet)"))
             except OSError as e:
-                log("Anmite getrennt:", e.strerror)
+                log("Anmite disconnected:", e.strerror)
             finally:
                 os.close(fd)
             time.sleep(0.5)
@@ -338,7 +338,7 @@ class Bridge:
 
 def main():
     if os.geteuid() != 0:
-        sys.exit("Bitte als root starten (systemd-Dienst touchbridge-bt).")
+        sys.exit("Please run as root (systemd service touchbridge-bt).")
     desc = load_descriptor()
     setup_bluez(desc)
     b = Bridge()

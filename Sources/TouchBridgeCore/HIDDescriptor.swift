@@ -233,10 +233,10 @@ public extension HIDDescriptor {
         guard let im = inputModeReport(mode: 2) else { return [] }
         var steps: [MultitouchActivationStep] = []
         let reads = contactCountMaximumField.map { [$0.reportID] } ?? []
-        steps.append(MultitouchActivationStep(name: "GetReport Max-Kontakte, dann Input Mode 2", readFirst: reads,
+        steps.append(MultitouchActivationStep(name: "GetReport max contacts, then Input Mode 2", readFirst: reads,
                                               reportID: im.reportID, bytes: im.bytes))
         if usesReportIDs, im.bytes.count > 1 {
-            steps.append(MultitouchActivationStep(name: "Input Mode 2 ohne Report-ID-Byte", readFirst: [],
+            steps.append(MultitouchActivationStep(name: "Input Mode 2 without report ID byte", readFirst: [],
                                                   reportID: im.reportID, bytes: Array(im.bytes.dropFirst())))
         }
         if let m3 = inputModeReport(mode: 3, clamp: false) {

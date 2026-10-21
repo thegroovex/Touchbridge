@@ -53,7 +53,7 @@ public final class USBSession {
     public func sendLogged(_ r: USBControlRequest, timeoutMs: UInt32 = 500) -> (rc: IOReturn, bytes: [UInt8], line: String) {
         let a = send(r, timeoutMs: timeoutMs)
         let line = "   " + r.summary + ": " + HIDReturn.describe(a.rc)
-            + (r.isIn && a.rc == kIOReturnSuccess ? " [\(HIDFeature.hex(a.bytes))] (\(a.bytes.count) Bytes)" : "")
+            + (r.isIn && a.rc == kIOReturnSuccess ? " [\(HIDFeature.hex(a.bytes))] (\(a.bytes.count) bytes)" : "")
         return (a.rc, a.bytes, line)
     }
 }
@@ -83,13 +83,13 @@ enum MultitouchInitializer {
 
     /// a) GetReport INPUT (wie usbhid_init_reports)
     static func hidInputGet(_ d: TouchDevice?, reportID: UInt8, log: (String) -> Void) {
-        guard let d = d else { log("   (Schnittstelle fehlt)"); return }
+        guard let d = d else { log("   (interface missing)"); return }
         var buf = [UInt8](repeating: 0, count: inputReportSize(d.device))
         buf[0] = reportID
         var len = CFIndex(buf.count)
         let rc = IOHIDDeviceGetReport(d.device, kIOHIDReportTypeInput, CFIndex(reportID), &buf, &len)
-        log(String(format: "   IOHIDDeviceGetReport Input %d (%@, Puffer %d): ", reportID, d.role.rawValue, buf.count) + HIDReturn.describe(rc)
-            + (rc == kIOReturnSuccess ? " [\(HIDFeature.hex(Array(buf.prefix(min(Int(len), 24)))))] (\(len) Bytes)" : ""))
+        log(String(format: "   IOHIDDeviceGetReport Input %d (%@, buffer %d): ", reportID, d.role.rawValue, buf.count) + HIDReturn.describe(rc)
+            + (rc == kIOReturnSuccess ? " [\(HIDFeature.hex(Array(buf.prefix(min(Int(len), 24)))))] (\(len) bytes)" : ""))
     }
 
     /// b) Feature 0x0A + 0x21 lesen (korrekte Länge), SetReport 0x21 Mode 2 (Device Identifier übernommen, falls plausibel)
@@ -99,14 +99,14 @@ enum MultitouchInitializer {
         if let c = desc.contactCountMaximumField {
             log(HIDFeature.describeGet(d.device, descriptor: desc, reportID: c.reportID, what: "Contact Count Max"))
         }
-        guard let tmpl = desc.inputModeReport(mode: 2) else { log("   kein Input-Mode-Feature im Descriptor"); return nil }
+        guard let tmpl = desc.inputModeReport(mode: 2) else { log("   no Input Mode feature in descriptor"); return nil }
         let cur = HIDFeature.get(d.device, reportID: tmpl.reportID, size: tmpl.bytes.count)
-        log(String(format: "   GetReport Feature 0x%02X Input Mode (Puffer %d): ", tmpl.reportID, tmpl.bytes.count) + HIDReturn.describe(cur.rc)
+        log(String(format: "   GetReport Feature 0x%02X Input Mode (buffer %d): ", tmpl.reportID, tmpl.bytes.count) + HIDReturn.describe(cur.rc)
             + (cur.bytes.isEmpty ? "" : " [\(HIDFeature.hex(cur.bytes))]"))
         guard let im = desc.inputModeReport(mode: 2, preserving: cur.rc == kIOReturnSuccess ? cur.bytes : nil) else { return nil }
         let rc = HIDFeature.set(d.device, reportID: im.reportID, bytes: im.bytes)
         log(String(format: "   SetReport Feature 0x%02X [%@]%@: ", im.reportID, HIDFeature.hex(im.bytes),
-                   im.preserved ? " (Antwort übernommen, Mode=2)" : " (Vorlage, Antwort unplausibel)") + HIDReturn.describe(rc))
+                   im.preserved ? " (reply reused, Mode=2)" : " (template, reply implausible)") + HIDReturn.describe(rc))
         return rc
     }
 
@@ -127,10 +127,10 @@ enum MultitouchInitializer {
                 let grc = IOHIDDeviceGetValueWithOptions(d.device, el, &back, 0x0002_0000)
                 let readback = grc == kIOReturnSuccess ? String(IOHIDValueGetIntegerValue(back.takeUnretainedValue())) : "–"
                 log(String(format: "   IOHIDDeviceSetValue Device Mode=2 (%@, Feature 0x%02X): ", d.role.rawValue, IOHIDElementGetReportID(el))
-                    + HIDReturn.describe(rc) + "  Rücklesen: " + HIDReturn.describe(grc) + " Wert \(readback)")
+                    + HIDReturn.describe(rc) + "  readback: " + HIDReturn.describe(grc) + " value \(readback)")
             }
         }
-        if hits == 0 { log("   kein Element 0x0D/0x52 gefunden") }
+        if hits == 0 { log("   no element 0x0D/0x52 found") }
         return hits
     }
 
@@ -142,12 +142,12 @@ enum MultitouchInitializer {
         let session: USBSession?
         if viaInterface {
             let s = USBSession.interface(vid: vid, pid: pid, number: digitizer)
-            log("   Interface-User-Client IF \(digitizer): " + HIDReturn.describe(s.createRC) + " (ohne USBInterfaceOpen)")
+            log("   Interface-User-Client IF \(digitizer): " + HIDReturn.describe(s.createRC) + " (without USBInterfaceOpen)")
             session = s.session
         } else {
             let s = USBSession.device(vid: vid, pid: pid, open: true)
-            log("   Geräte-User-Client: " + HIDReturn.describe(s.createRC)
-                + (s.openRC.map { "  USBDeviceOpen: " + HIDReturn.describe($0) + ($0 == kIOReturnSuccess ? "" : " – Requests ohne Open") } ?? ""))
+            log("   Device user client: " + HIDReturn.describe(s.createRC)
+                + (s.openRC.map { "  USBDeviceOpen: " + HIDReturn.describe($0) + ($0 == kIOReturnSuccess ? "" : " – requests without open") } ?? ""))
             session = s.session
         }
         guard let s = session else { return false }
@@ -163,7 +163,7 @@ enum MultitouchInitializer {
             tries += 1
             let a = s.sendLogged(r, timeoutMs: 300)
             if a.rc == kIOReturnSuccess || retryUntil.map({ Date() >= $0 }) ?? true {
-                log(a.line + (tries > 1 ? "  (Versuch \(tries))" : ""))
+                log(a.line + (tries > 1 ? "  (attempt \(tries))" : ""))
                 return (a.rc, a.bytes)
             }
             usleep(5_000)
@@ -179,8 +179,8 @@ enum MultitouchInitializer {
             if r.isIn, r.wValue & 0xFF == UInt16(imID ?? 0), a.rc == kIOReturnSuccess {
                 current = a.bytes
                 let plausible = desc.isPlausibleFeature(a.bytes, reportID: imID ?? 0, length: Int(r.wLength))
-                log("   → Input-Mode-Antwort per USB " + (plausible ? "plausibel (IOHID lieferte [A1 01 21] – IOHID-Pfad verdächtig!)"
-                                                                  : "ebenfalls unplausibel"))
+                log("   → Input Mode reply via USB " + (plausible ? "plausible (IOHID returned [A1 01 21] – IOHID path suspicious!)"
+                                                                  : "implausible as well"))
             }
         }
         guard let set = LinuxHIDInit.inputModeSet(digitizer: digitizer, descriptor: desc, current: current) else { return false }
@@ -230,15 +230,15 @@ public final class MultitouchExperiment {
         self.completion = completion
         service.experimentActive = true
         service.muted = true
-        log("— Multitouch-Experimente \(Date()) —")
-        log("Gerät VID " + String(format: "0x%04X PID 0x%04X", vid, pid) + "  USB-Geräte in der Registry: \(USBSession.deviceCount(vid: vid, pid: pid))")
+        log("— Multitouch experiments \(Date()) —")
+        log("Device VID " + String(format: "0x%04X PID 0x%04X", vid, pid) + "  USB devices in registry: \(USBSession.deviceCount(vid: vid, pid: pid))")
         for d in service.devices {
-            log("   Schnittstelle \(d.label): IF " + (MultitouchInitializer.interfaceNumber(d.device).map(String.init) ?? "?")
-                + "  " + (d.exclusive ? "exklusiv" : "nicht exklusiv"))
+            log("   Interface \(d.label): IF " + (MultitouchInitializer.interfaceNumber(d.device).map(String.init) ?? "?")
+                + "  " + (d.exclusive ? "exclusive" : "non-exclusive"))
         }
-        log("Reports bisher: \(service.reportSummary)")
+        log("Reports so far: \(service.reportSummary)")
         guard digitizer != nil else {
-            log("❌ Digitizer-Schnittstelle (Report 13) nicht geöffnet – Experimente abgebrochen.")
+            log("❌ Digitizer interface (report 13) not open – experiments aborted.")
             finish(); return
         }
         queue = [.hidSetValue, .hidInputGet, .hidFeature, .usbLinuxInit, .usbInterfaceLinuxInit] + (options.reenumerate ? [.usbReenumerateInit] : [])
@@ -269,7 +269,7 @@ public final class MultitouchExperiment {
             done()
         case .usbLinuxInit, .usbInterfaceLinuxInit:
             guard let d = digitizer, let ifn = MultitouchInitializer.interfaceNumber(d.device) else {
-                log("   bInterfaceNumber des Digitizers nicht gefunden – übersprungen"); done(); return
+                log("   bInterfaceNumber of the digitizer not found – skipped"); done(); return
             }
             MultitouchInitializer.usbLinuxInit(vid: vid, pid: pid, interfaces: MultitouchInitializer.interfaceNumbers(service.devices),
                                                digitizer: ifn, descriptor: d.descriptor, viaInterface: step == .usbInterfaceLinuxInit, log: l)
@@ -286,22 +286,22 @@ public final class MultitouchExperiment {
     /// Linux-Sequenz senden; danach – sobald der Digitizer wieder als HID-Gerät erscheint – Input Mode per IOHID.
     private func reenumerate(done: @escaping () -> Void) {
         guard let d = digitizer, let ifn = MultitouchInitializer.interfaceNumber(d.device) else {
-            log("   bInterfaceNumber des Digitizers nicht gefunden – übersprungen"); done(); return
+            log("   bInterfaceNumber of the digitizer not found – skipped"); done(); return
         }
         let desc = d.descriptor
         let ifaces = MultitouchInitializer.interfaceNumbers(service.devices)
         let (vid, pid) = (self.vid, self.pid)
         let s = USBSession.device(vid: vid, pid: pid, open: true)
-        log("   Geräte-User-Client: " + HIDReturn.describe(s.createRC) + (s.openRC.map { "  USBDeviceOpen: " + HIDReturn.describe($0) } ?? ""))
+        log("   Device user client: " + HIDReturn.describe(s.createRC) + (s.openRC.map { "  USBDeviceOpen: " + HIDReturn.describe($0) } ?? ""))
         guard let session = s.session, session.isOpen else {
-            log("   ✗ Neu-Enumeration braucht USBDeviceOpen – ein anderer Client (Composite-/HID-Treiber) hält das Gerät. Übersprungen.")
+            log("   ✗ Re-enumeration needs USBDeviceOpen – another client (composite/HID driver) holds the device. Skipped.")
             done(); return
         }
         var reattached = false
         service.onDigitizerAttached = { [weak self] dev in
             guard let self = self, !reattached else { return }
             reattached = true
-            self.log("   HID-Digitizer wieder da (\(dev.label)) – sofort Device Mode per SetValue + Input Mode per IOHID:")
+            self.log("   HID digitizer back (\(dev.label)) – immediately Device Mode via SetValue + Input Mode via IOHID:")
             MultitouchInitializer.hidSetValue([dev]) { self.log($0) }
             MultitouchInitializer.hidFeature(dev) { self.log($0) }
             done()
@@ -317,7 +317,7 @@ public final class MultitouchExperiment {
             withExtendedLifetime(session) {}
             // altes Gerät verschwindet, neues erscheint
             while USBSession.deviceCount(vid: vid, pid: pid) > 0 && ms() < 3000 { usleep(2_000) }
-            out.append("   altes USB-Gerät weg nach \(ms()) ms")
+            out.append("   old USB device gone after \(ms()) ms")
             var fresh: USBSession?
             while ms() < 10_000 {
                 if USBSession.deviceCount(vid: vid, pid: pid) > 0, let s2 = USBSession.device(vid: vid, pid: pid, open: false).session {
@@ -326,12 +326,12 @@ public final class MultitouchExperiment {
                 usleep(5_000)
             }
             if let s2 = fresh {
-                out.append("   neues USB-Gerät nach \(ms()) ms – sende sofort die Linux-Sequenz:")
+                out.append("   new USB device after \(ms()) ms – sending the Linux sequence right away:")
                 _ = MultitouchInitializer.runLinuxSequence(s2, interfaces: ifaces, digitizer: ifn, descriptor: desc,
                                                            retryUntil: Date().addingTimeInterval(3)) { out.append($0) }
-                out.append("   Linux-Sequenz fertig nach \(ms()) ms")
+                out.append("   Linux sequence done after \(ms()) ms")
             } else {
-                out.append("   ✗ Gerät nach 10 s nicht wieder erschienen")
+                out.append("   ✗ device did not reappear within 10 s")
             }
             DispatchQueue.main.async {
                 guard let self = self else { return }
@@ -340,7 +340,7 @@ public final class MultitouchExperiment {
                 let t = Timer(timeInterval: 8, repeats: false) { [weak self] _ in
                     guard let self = self, !reattached else { return }
                     reattached = true
-                    self.log("   ✗ HID-Digitizer nach 8 s nicht wieder erschienen")
+                    self.log("   ✗ HID digitizer did not reappear within 8 s")
                     done()
                 }
                 RunLoop.main.add(t, forMode: .common)
@@ -349,7 +349,7 @@ public final class MultitouchExperiment {
     }
 
     private func wait(_ step: MultitouchSequence) {
-        log(String(format: "   … %.0f s warten – bitte jetzt mit 2 Fingern auf das Anmite tippen/wischen", options.waitSeconds))
+        log(String(format: "   … waiting %.0f s – please tap/swipe on the Anmite with 2 fingers now", options.waitSeconds))
         let t = Timer(timeInterval: options.waitSeconds, repeats: false) { [weak self] _ in self?.evaluate(step) }
         RunLoop.main.add(t, forMode: .common)
         timer = t
@@ -360,7 +360,7 @@ public final class MultitouchExperiment {
         let ptr = service.pointerReports - snapshot.ptr
         let ven = service.vendorReports - snapshot.vendor
         let v = MultitouchVerdict.evaluate(digitizerReports: mt, pointerReports: ptr)
-        log("   Reports in der Wartezeit: Digitizer (13) \(mt), Maus (7) \(ptr), Vendor (0x50, nur gelesen) \(ven)")
+        log("   Reports during the wait: digitizer (13) \(mt), mouse (7) \(ptr), vendor (0x50, read only) \(ven)")
         log("   " + v.text)
         if v == .multitouch { success = step }
         next()
@@ -373,11 +373,11 @@ public final class MultitouchExperiment {
         service.muted = false
         log("")
         if let s = success {
-            log("✅ Ergebnis: Multitouch mit „\(s.title)“ – wird gespeichert und künftig beim Verbinden automatisch angewendet.")
+            log("✅ Result: multitouch with \"\(s.title)\" – saved and applied automatically on every connect from now on.")
         } else {
-            log("✗ Ergebnis: kein Schritt brachte Report 13 – Single-Touch über die Maus-Schnittstelle bleibt aktiv.")
+            log("✗ Result: no step produced report 13 – single-touch via the mouse interface stays active.")
         }
-        log("Reports gesamt: \(service.reportSummary)")
+        log("Total reports: \(service.reportSummary)")
         let c = completion
         completion = nil
         c?(success)
@@ -394,7 +394,7 @@ extension TouchService {
     func applyRemembered(_ seq: MultitouchSequence, to d: TouchDevice) {
         let l: (String) -> Void = { [weak self] in self?.log($0) }
         let vid = settings.vid ?? HIDProbe.anmiteVID, pid = settings.pid ?? HIDProbe.anmitePID
-        log("🔧 Gespeicherte Multitouch-Sequenz: \(seq.title)")
+        log("🔧 Saved multitouch sequence: \(seq.title)")
         switch seq {
         case .hidInputGet:
             MultitouchInitializer.hidInputGet(d, reportID: 13, log: l)
@@ -404,7 +404,7 @@ extension TouchService {
         case .hidSetValue:
             MultitouchInitializer.hidSetValue(devices, log: l)
         case .usbLinuxInit, .usbInterfaceLinuxInit:
-            guard let ifn = MultitouchInitializer.interfaceNumber(d.device) else { log("   bInterfaceNumber fehlt"); return }
+            guard let ifn = MultitouchInitializer.interfaceNumber(d.device) else { log("   bInterfaceNumber missing"); return }
             MultitouchInitializer.usbLinuxInit(vid: vid, pid: pid, interfaces: MultitouchInitializer.interfaceNumbers(devices),
                                                digitizer: ifn, descriptor: d.descriptor, viaInterface: seq == .usbInterfaceLinuxInit, log: l)
         case .usbReenumerateInit:
@@ -415,7 +415,7 @@ extension TouchService {
             guard let ifn = MultitouchInitializer.interfaceNumber(d.device) else { return }
             let s = USBSession.device(vid: vid, pid: pid, open: true)
             guard let session = s.session, session.isOpen else {
-                log("   USBDeviceOpen: " + (s.openRC.map(HIDReturn.describe) ?? "–") + " – Neu-Enumeration nicht möglich, nur Input Mode")
+                log("   USBDeviceOpen: " + (s.openRC.map(HIDReturn.describe) ?? "–") + " – re-enumeration not possible, Input Mode only")
                 MultitouchInitializer.hidFeature(d, log: l); return
             }
             let desc = d.descriptor, ifaces = MultitouchInitializer.interfaceNumbers(devices)

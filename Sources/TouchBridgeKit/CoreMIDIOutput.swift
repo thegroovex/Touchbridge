@@ -17,13 +17,13 @@ public final class CoreMIDIOutput: MIDISink {
         var c = MIDIClientRef()
         var st = MIDIClientCreate(name as CFString, nil, nil, &c)
         guard st == noErr else {
-            log("❌ CoreMIDI: Client konnte nicht angelegt werden (\(st)).")
+            log("❌ CoreMIDI: could not create client (\(st)).")
             return nil
         }
         var s = MIDIEndpointRef()
         st = MIDISourceCreate(c, name as CFString, &s)
         guard st == noErr else {
-            log("❌ CoreMIDI: virtuelle Quelle „\(name)“ konnte nicht angelegt werden (\(st)).")
+            log("❌ CoreMIDI: could not create virtual source \"\(name)\" (\(st)).")
             MIDIClientDispose(c)
             return nil
         }
@@ -31,7 +31,7 @@ public final class CoreMIDIOutput: MIDISink {
         _ = MIDIObjectSetStringProperty(s, kMIDIPropertyManufacturer, "TouchBridge" as CFString)
         client = c
         source = s
-        log("🎹 MIDI-Port „\(name)“ bereit.")
+        log("🎹 MIDI port \"\(name)\" ready.")
     }
 
     deinit {

@@ -440,6 +440,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(submenu(L("Scrolling", "Scrollen"), scrollMenu()))
         menu.addItem(toggle(L("1-finger drag scrolls (instead of pointer/drag)", "1-Finger-Ziehen scrollt (statt Zeiger/Ziehen)"), settings.oneFingerScroll, #selector(toggleOneFingerScroll)))
         menu.addItem(toggle(L("Pinch = trackpad zoom (off: Cmd + / Cmd −)", "Pinch = Trackpad-Zoom (aus: Cmd + / Cmd −)"), settings.nativeZoom, #selector(toggleNativeZoom)))
+        menu.addItem(toggle(L("Momentum scrolling", "Scrollen mit Nachlauf (Momentum)"), settings.momentumScroll, #selector(toggleMomentum)))
+        menu.addItem(toggle(L("Hide pointer while touching", "Zeiger beim Berühren ausblenden"), settings.hidePointer, #selector(toggleHidePointer)))
+        menu.addItem(submenu(L("Gestures", "Gesten"), gesturesMenu()))
         menu.addItem(toggle(L("Exclusive access (recommended)", "Exklusiv übernehmen (empfohlen)"), settings.seize, #selector(toggleSeize)))
         let touchOnly = toggle(L("Exclusive touch interface only (test: mouse/vendor not exclusive)", "Exklusiv nur Touch-Schnittstelle (Test: Maus/Vendor nicht exklusiv)"), settings.seizeTouchOnly,
                                #selector(toggleSeizeTouchOnly))
@@ -542,6 +545,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return m
     }
 
+    /// Current gesture mappings (read-only; the editor follows in phase 2)
+    private func gesturesMenu() -> NSMenu {
+        let m = NSMenu()
+        m.autoenablesItems = false
+        func line(_ t: String) {
+            let i = NSMenuItem(title: t, action: nil, keyEquivalent: "")
+            i.isEnabled = false
+            m.addItem(i)
+        }
+        line(L("Tap → Click", "Tippen → Klick"))
+        line(L("Long press → Right click", "Lange halten → Rechtsklick"))
+        line(L("2-finger tap → Right click", "2-Finger-Tippen → Rechtsklick"))
+        line(L("2-finger drag → Scroll", "2-Finger-Ziehen → Scrollen"))
+        line(L("2-finger pinch → Zoom", "2-Finger-Pinch → Zoomen"))
+        line(L("2-finger rotate → Rotate", "2-Finger-Drehen → Drehen"))
+        m.addItem(.separator())
+        for t in GestureTrigger.allCases {
+            line("\(t.title) → \(settings.gestures[t].title)")
+        }
+        m.addItem(.separator())
+        line(L("Editing gestures follows in a later version", "Gesten bearbeiten folgt in einer späteren Version"))
+        return m
+    }
+
     private func scrollMenu() -> NSMenu {
         let m = NSMenu()
         m.addItem(toggle(L("Reverse direction", "Richtung umkehren"), settings.invertScroll, #selector(toggleInvert)))
@@ -617,6 +644,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func toggleSeizeTouchOnly() { settings.seizeTouchOnly.toggle() }
     @objc private func toggleOneFingerScroll() { settings.oneFingerScroll.toggle() }
     @objc private func toggleNativeZoom() { settings.nativeZoom.toggle() }
+    @objc private func toggleMomentum() { settings.momentumScroll.toggle() }
+    @objc private func toggleHidePointer() { settings.hidePointer.toggle() }
     @objc private func selectLanguage(_ sender: NSMenuItem) {
         L10n.set(AppLanguage.allCases[sender.tag]); updateIcon()
     }

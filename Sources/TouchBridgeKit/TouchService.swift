@@ -43,12 +43,18 @@ public struct TouchSettings: Codable, Equatable {
     public var nativeZoom = true
     /// Erfolgreiche Multitouch-Sequenz aus den Experimenten (MultitouchSequence.rawValue) – beim Verbinden anwenden
     public var mtSequence: String? = nil
+    /// Nachlauf nach dem Loslassen beim Scrollen (wie Trackpad)
+    public var momentumScroll = true
+    /// Zeiger ausblenden, solange per Touch bedient wird (zurück bei echter Maus-/Trackpad-Bewegung)
+    public var hidePointer = true
+    /// Mehrfinger-Gesten -> Aktionen (Phase 2: Gesten-Editor)
+    public var gestures = GestureMap.defaults
     public init() {}
 
     enum CodingKeys: String, CodingKey {
         case enabled, displayID, rotation, flipX, flipY, swapXY, invertScroll, scrollGain, seize, vid, pid
         case mode, midiLayout, mpe, midiChannel, baseNote, scale, bendRange, showOverlay, suppressSystemPointer
-        case seizeTouchOnly, oneFingerScroll, mtSequence, nativeZoom
+        case seizeTouchOnly, oneFingerScroll, mtSequence, nativeZoom, momentumScroll, hidePointer, gestures
     }
 
     /// Fehlende Schlüssel (ältere gespeicherte Einstellungen) fallen auf die Standardwerte zurück.
@@ -80,6 +86,9 @@ public struct TouchSettings: Codable, Equatable {
         oneFingerScroll = v(.oneFingerScroll, d.oneFingerScroll)
         nativeZoom = v(.nativeZoom, d.nativeZoom)
         mtSequence = (try? c.decodeIfPresent(String.self, forKey: .mtSequence)) ?? nil
+        momentumScroll = v(.momentumScroll, d.momentumScroll)
+        hidePointer = v(.hidePointer, d.hidePointer)
+        gestures = v(.gestures, d.gestures)
     }
     public var multitouchSequence: MultitouchSequence? { mtSequence.flatMap(MultitouchSequence.init(rawValue:)) }
 
@@ -90,6 +99,8 @@ public struct TouchSettings: Codable, Equatable {
         g.scrollGain = CGFloat(scrollGain)
         g.oneFingerScroll = oneFingerScroll
         g.nativeZoom = nativeZoom
+        g.momentumScroll = momentumScroll
+        g.gestures = gestures
         return g
     }
     public var midiConfig: MIDIConfig {
@@ -246,7 +257,9 @@ public final class TouchService {
                 // laufende Geste bzw. klingende Noten sauber beenden
                 if oldValue.mode == .gestures, engine.isActive { engine.update([]) }
                 if oldValue.mode == .midi { midiEngine?.releaseAll() }
+                if settings.mode == .midi { engine.stopMomentum(); syncFrameTimer(); cursorHider.show() }
             }
+            if !settings.hidePointer || !settings.enabled { cursorHider.show() }
             if let m = midiEngine {
                 m.setLayout(settings.midiLayoutModel)
                 m.setConfig(settings.midiConfig)
@@ -276,6 +289,14 @@ public final class TouchService {
 
     public let gestureBase: GestureConfig
     private let poster = EventPoster()
+    /// Zeiger beim Touch ausblenden
+    public let cursorHider = CursorHider()
+    /// Phase 2: Touch-Kontextmenü (langes Halten). Ohne Delegate bzw. bei false bleibt es beim Rechtsklick.
+    public weak var gestureDelegate: GestureEngineDelegate? {
+        didSet { engine.delegate = gestureDelegate }
+    }
+    /// 120-Hz-Takt nur während des Scroll-Nachlaufs
+    private var frameTimer: Timer?
     private lazy var engine = GestureEngine(poster: poster, config: settings.gestureConfig(base: gestureBase))
     private var manager: IOHIDManager?
     /// Manager-Callbacks bekommen einen Integer-Schlüssel als Context (kein Unmanaged auf self)
@@ -305,6 +326,12 @@ public final class TouchService {
         self.gestureBase = gestureBase
         suppressor.lastReport = { [weak self] in self?.lastTouchReport }
         suppressor.touching = { [weak self] in self?.devices.contains(where: \.hadContacts) ?? false }
+        cursorHider.touchOngoing = { [weak self] in
+            guard let self = self else { return false }
+            if self.devices.contains(where: \.hadContacts) { return true }
+            if let t = self.lastTouchReport, CFAbsoluteTimeGetCurrent() - t < 0.5 { return true }
+            return false
+        }
     }
 
     deinit { TouchService.services.remove(serviceKey) }
@@ -358,6 +385,9 @@ public final class TouchService {
         guard settings.enabled || dumpMode else { status = Status(running: false); return }
 
         suppressor.log = log
+        cursorHider.log = log
+        HIDEventBridge.log = log
+        log("🖱  " + HIDEventBridge.summary)
         let access = Permissions.inputMonitoring
         log("🔐 Input Monitoring: \(Permissions.inputMonitoringState)")
         if !access {
@@ -422,6 +452,9 @@ public final class TouchService {
         activation = nil
         pending.removeAll()
         if engine.isActive { engine.update([]) }
+        engine.stopMomentum()
+        frameTimer?.invalidate(); frameTimer = nil
+        cursorHider.show()
         midiEngine?.releaseAll()
         onMIDIUpdate?()
         // Beobachter abmelden und Geräte schließen. Die IOKit-Registrierung (Puffer, Callback) gehört dem
@@ -741,11 +774,30 @@ public final class TouchService {
             log(contacts.isEmpty ? "— no contacts —" : "\(contacts.count) finger(s): \(s)")
             return
         }
+        if !points.isEmpty && settings.hidePointer { cursorHider.touchBegan() }
         engine.update(points)
+        syncFrameTimer()
+    }
+
+    /// Während des Scroll-Nachlaufs tick() mit 120 Hz, sonst kein schneller Timer
+    private func syncFrameTimer() {
+        if engine.isMomentumActive {
+            guard frameTimer == nil else { return }
+            let t = Timer(timeInterval: 1.0 / 120, repeats: true) { [weak self] _ in
+                guard let self = self else { return }
+                self.engine.tick()
+                if !self.engine.isMomentumActive { self.frameTimer?.invalidate(); self.frameTimer = nil }
+            }
+            RunLoop.main.add(t, forMode: .common)
+            frameTimer = t
+        } else if let t = frameTimer {
+            t.invalidate()
+            frameTimer = nil
+        }
     }
 
     fileprivate func releaseIfActive() {
-        if engine.isActive { engine.update([]) }
+        if engine.isActive { engine.update([]); syncFrameTimer() }
         if let m = midiEngine, !m.fingerInfo.isEmpty { m.releaseAll(); onMIDIUpdate?() }
     }
 }

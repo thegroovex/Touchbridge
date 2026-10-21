@@ -40,6 +40,8 @@ func printUsage() {
       --seize-touch-only     seize only the touch (digitizer) interface, not mouse/vendor (test)
       --one-finger-scroll    1-finger drag scrolls instead of pointer/drag
       --key-zoom             pinch sends Cmd +/- instead of the trackpad zoom gesture
+      --no-momentum          no momentum (coasting) after lifting the fingers while scrolling
+      --show-pointer         do not hide the pointer while touching
       --rotate 0|90|180|270  panel rotation (clockwise)
       --swap-xy --flip-x --flip-y   adjust axes
       --invert-scroll        invert scroll direction
@@ -80,6 +82,8 @@ while !args.isEmpty {
     case "--seize-touch-only": settings.seizeTouchOnly = true
     case "--one-finger-scroll": settings.oneFingerScroll = true
     case "--key-zoom": settings.nativeZoom = false
+    case "--no-momentum": settings.momentumScroll = false
+    case "--show-pointer": settings.hidePointer = false
     case "--rotate": settings.rotation = Int(next()) ?? 0
     case "--swap-xy": settings.swapXY = true
     case "--flip-x": settings.flipX = true

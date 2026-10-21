@@ -120,17 +120,23 @@ To remove it: `curl -fsSL https://raw.githubusercontent.com/thegroovex/Touchbrid
 |---|---|
 | Tap with 1 finger | Click (tap twice = double-click) |
 | Drag with 1 finger | Drag / select / move windows |
-| Hold 1 finger (~0.65 s) | Right-click |
-| Tap with 2 fingers | Right-click * |
-| Slide 2 fingers | Scroll (vertical and horizontal) * |
+| Hold 1 finger (~0.5 s) | Right-click |
+| Tap with 2 fingers | Right-click (after a short pause, so a double tap can be recognised) * |
+| Double-tap with 2 fingers | Smart zoom * |
+| Slide 2 fingers | Scroll with momentum and rubber-banding, like a trackpad * |
 | Pinch / spread 2 fingers | Zoom, like on a trackpad (Maps, Photos, Safari, Preview …) * |
-| Swipe 3 fingers left / right | Switch desktop (Space) * |
-| Swipe 3 fingers up / down | Mission Control / App Exposé * |
+| Rotate 2 fingers | Rotate (Photos, Preview, Maps …) * |
+| Swipe 3 or 4 fingers left / right | Switch desktop (Space) * |
+| Swipe 3 or 4 fingers up / down | Mission Control / App Exposé * |
+| Pinch 4–5 fingers together | Launchpad (Apps on macOS 26+) * |
+| Spread 4–5 fingers | Show desktop * |
 
 \* needs the multitouch setup.
 
 Menu options: **Language** (English/Deutsch), **1-finger drag scrolls** (instead of dragging), **Pinch = trackpad zoom** (off: sends Cmd + / Cmd −
-instead), scroll direction and speed, screen orientation (Touch › Orientation).
+instead), **Momentum scrolling**, **Hide pointer while touching** (comes back when you move a real mouse or trackpad), scroll direction and
+speed, screen orientation (Touch › Orientation). **Touch › Gestures** lists which gesture does what. Mission Control, App Exposé and Spaces use
+the system shortcuts Ctrl ↑ / Ctrl ↓ / Ctrl ← → and Show desktop uses F11 – keep them enabled in System Settings › Keyboard › Keyboard Shortcuts.
 
 ## MIDI mode
 
